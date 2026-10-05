@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { margin: 0; color: #27445f; font: 14px Arial, sans-serif; }
+      button { border: 0; border-radius: 7px; background: #1769aa; color: white;
+        cursor: pointer; font-weight: 600; padding: 10px 15px; }
+      button:disabled { cursor: wait; opacity: .7; }
+      #message { margin-left: 10px; color: #526c84; }
+    </style>
+  </head>
+  <body>
+    <button id="locate" type="button">Use my current location</button>
+    <span id="message">Your browser will ask for permission.</span>
+    <script>
+      const button = document.getElementById("locate");
+      const message = document.getElementById("message");
+      const send = (type, data = {}) => {
+        window.parent.postMessage({isStreamlitMessage: true, type, ...data}, "*");
+      };
+      send("streamlit:componentReady", {apiVersion: 1});
+      send("streamlit:setFrameHeight", {height: 48});
+
+      button.addEventListener("click", () => {
+        if (!navigator.geolocation) {
+          message.textContent = "Geolocation is not supported by this browser.";
+          return;
+        }
+        button.disabled = true;
+        message.textContent = "Requesting location permission...";
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            const value = {
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+              accuracy: position.coords.accuracy
+            };
+            message.textContent = `Location captured (${value.latitude.toFixed(5)}, ${value.longitude.toFixed(5)}).`;
+            button.disabled = false;
+            send("streamlit:setComponentValue", {value});
+          },
+          (error) => {
+            message.textContent = error.message || "Could not access your location.";
+            button.disabled = false;
+          },
+          {enableHighAccuracy: true, timeout: 12000, maximumAge: 60000}
+        );
+      });
+    </script>
+  </body>
+</html>

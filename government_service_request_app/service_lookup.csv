@@ -1,0 +1,132 @@
+SERVICECODE,SERVICECODEDESCRIPTION,SERVICETYPECODEDESCRIPTION,DEPARTMENT
+11,Dead Animal Collection,SWMA- Solid Waste Management Admistration,DPW
+211CFSA,211 Warmline Service Request,CFSA,CFSA
+25POWEOUTA,OCTFME - Down Cable Wires,Unknown,DPW
+BICYCLE,Abandoned Bicycle,SWMA- Solid Waste Management Admistration,DPW
+C62313m,Christmas Tree Removal - Missed,SWMA- Solid Waste Management Administration,DPW
+COMPOST,"Lost/Stolen Compost Bin, Broken Compost Bin or Opt-Out of Curbside Composting Pilot Program",Unknown,DPW
+COMPOSTM,Missed Curbside Compost Collection,Unknown,DPW
+CONTREMO,Container Removal,SWMA- Solid Waste Management Admistration,DPW
+CSRREPIS,311Force Reported Issues,311- Call Center,OUC
+DCDOGPRKMNT2022,DC Dog Park Maintenance (DGS),Unknown,DGS
+DCGOVTINFO,DC Government Information,311- Call Center,OUC
+DCINOUTPOOL2022,DC Indoor and Outdoor Pool Maintenance  (DGS),Unknown,DGS
+DCSPRAY2022,DC Spray Parks (DGS),Unknown,DGS
+DCWFQ,DC Water - Customer Flooding,Unknown,DC Water
+DDBALATI,DOEE - Bag Law Tips,Department of Energy and Environment,DOEE
+DDENIDTI,DOEE - Engine Idling Tips,Department of Energy and Environment,DOEE
+DDOCONRU,DOEE - Report Construction Erosion Runoff,Department of Energy and Environment,DOEE
+DFHV-LOSTFOUND,DFHV - Lost and Found Claims (DC Taxi),Unknown,DFHV
+DFHV-PUBCOM,DFHV - For Hire Vehicle Concerns,DFHV - Department of For-Hire Vehicles,DFHV
+DGSDCFLGM,DGS Grounds Landscaping (DGS),Unknown,DGS
+DGSGMSM,Grass Mowing Services Missed (DGS),Unknown,DGS
+DMETTASI,DMV - eTIMS Ticket Alert Services Issues,Adjudication Services,DMV
+DMINSTIS,DMV - Vehicle Inspection Issues,Driver Vehicle Services,DMV
+DMOI21,DMOI Customer Service Tracker,Unknown,DMOI
+DMPRCEMA,DMV - Processing Center Manager,Driver Vehicle Services,DMV
+DMV-ATEquity,DMV - ATEquity Pilot,Unknown,DMV
+DMV01,DMV - Drivers License/ID Issues,Driver Vehicle Services,DMV
+DMV08,DMV - Drivers License/ID Reinstatement,Driver Vehicle Services,DMV
+DMV12,DMV - Driver Record Issues,Driver Vehicle Services,DMV
+DMV19,DMV - Vehicle Registration Issues,Driver Vehicle Services,DMV
+DMV31,DMV - Vehicle Title Issues,Driver Vehicle Services,DMV
+DMV37,DMV - Vehicle Insurance Lapse,Driver Vehicle Services,DMV
+DMV40,DMV - Appeal,Adjudication Services,DMV
+DMV43,DMV - Hearings,Adjudication Services,DMV
+DMV48,DMV - Ticket Payment Dispute,Adjudication Services,DMV
+DMV51,DMV - Refunds - Tickets,Adjudication Services,DMV
+DMV63,"DMV - Forms, Applications, and Manuals Request",Driver Vehicle Services,DMV
+DMV66,DMV - Copy of Ticket,Adjudication Services,DMV
+DMV71,DMV - Driver and Vehicle Services Refund,Driver Vehicle Services,DMV
+DMVADJSU,DMV - Adjudication Supervisor,Adjudication Services,DMV
+DOCVEH2022,Dockless Vehicle Parking Complaint,Unknown,DDOT
+DOEE-GIM,Green Infrastructure Maintenance,Unknown,DOEE
+EMEHEACO,Emergency - Heating and Cooling,311- Emergencies,OUC
+EMERFLOO,Emergency - Flooding,311- Emergencies,OUC
+EMERPOWE,Emergency - Power Outage/Wires Down,311- Emergencies,OUC
+EMERSENI,Emergency - Senior Assistance,311- Emergencies,OUC
+EMERTRAN,Emergency - Transportation,311- Emergencies,OUC
+EMNPV,Emergency No-Parking Verification,PEMA- Parking Enforcement Management Administration,DPW
+FEMEDUPR,FEMS - Fire Safety Education,FEMS,FEMS
+FEMSFIREINSP,FEMS - Fire Safety Inspection,FEMS,FEMS
+FESAADNU,FEMS - Smoke Alarm Application,FEMS-Smoke Alarms,FEMS
+FESPEDNU,FEMS - Community Events,FEMS-Special Events,FEMS
+FOAMBAN,DOEE - Foam Ban / Food Service Ware Requirements,Department of Energy and Environment,DOEE
+GRAFF,Graffiti Removal,SWMA- Solid Waste Management Admistration,DPW
+HAID2022,DC How Am I Driving?,Unknown,ORM
+HYPSHEIN,Hypothermia Shelter Information,311- Call Center,OUC
+ILLEFIRE,Illegal Fireworks,311- Call Center,OUC
+ILLEGALCON,DOB - Illegal Construction,Department of Buildings (DOB),DOB
+INSECTT01,Bee Treatment and Inspection (DOH),DOH- Department Of Health,DOH
+ITISSUES,DMV - Online Processing Issues,Driver Vehicle Services,DMV
+LCANINS,Public Space Litter Can Installation,SWMA- Solid Waste Management Administration,DPW
+LCanRem,Public Space Litter Can Removal,SWMA- Solid Waste Management Administration,DPW
+LCanRep,Public Space Litter Can Repair,SWMA- Solid Waste Management Administration,DPW
+LIHEAP,DOEE - LIHEAP,Unknown,DOEE
+MARKINST,Roadway Striping / Markings,Transportation Operations Administration,DDOT
+NEIGHCLEANUP,Neighborhood Clean-Up,SWMA- Solid Waste Management Admistration,DPW
+OUTODOR,DOEE - General Air Quality Concerns,Department of Energy and Environment,DOEE
+OVRFLWREC,DGS - Overflowing Recycling Can,Unknown,DGS
+PETWASTECOMP,Pet Waste Complaint,311- Call Center,OUC
+PLAYGNDREP,DGS - Playground Repair,Unknown,DGS
+POWEOUTA,Wire Down/Power Outage,311- Call Center,OUC
+PRUNING,Tree Pruning,Urban Forrestry,DDOT
+PubspceInsp,Public Space Inspection,Unknown,DDOT
+RATREPLACECONTRS,Rat Replacement Containers,SWMA- Solid Waste Management Admistration,DPW
+RECCONRE,Recycling Cart - Repair,SWMA- Solid Waste Management Admistration,DPW
+RECSCHPR,Recycling - School Program,SWMA- Solid Waste Management Admistration,DPW
+REIT121918,DPW - Reporting Electronics in Trash,Unknown,DPW
+RPP,Residential Parking Permit Violation,PEMA- Parking Enforcement Management Administration,DPW
+S0000,Abandoned Vehicle - On Public Property,PEMA- Parking Enforcement Management Administration,DPW
+S0003,Abandoned Vehicle - On Private Property,PEMA- Parking Enforcement Management Administration,DPW
+S0011,Alley Cleaning,SWMA- Solid Waste Management Admistration,DPW
+S0016,Alley Repair,SIOD,DDOT
+S0021,Bicycle Services,Department of Transportation,DDOT
+S0031,Bulk Collection,SWMA- Solid Waste Management Admistration,DPW
+S0046,Bus/Rail Issues,Transportation Policy & Planning Administration,DDOT
+S0166,Grass and Weeds Mowing,SWMA- Solid Waste Management Admistration,DPW
+S0181,Illegal Dumping,SWMA- Solid Waste Management Admistration,DPW
+S0185,Illegal Poster,SWMA- Solid Waste Management Admistration,DPW
+S0196,Leaf  Collection Missed,SWMA- Solid Waste Management Admistration,DPW
+S0217,Public Space Litter Can-Collection,SWMA- Solid Waste Management Admistration,DPW
+S0261,Parking Enforcement,PEMA- Parking Enforcement Management Administration,DPW
+S0276,Parking Meter Repair,Transportation Operations Administration,DDOT
+S0301,Pothole,Toa-Street & Bridge Maintenance,DDOT
+S0311,Rodent Inspection and Treatment,DOH- Department Of Health,DOH
+S0316,Recycling Cart Delivery,SWMA- Solid Waste Management Admistration,DPW
+S0321,Recycling Collection - Missed,SWMA- Solid Waste Management Administration,DPW
+S0322,Recycling- Information Request,SWMA- Solid Waste Management Admistration,DPW
+S0323,Recycling - Commercial Only,SWMA- Solid Waste Management Admistration,DPW
+S0331,Resident Parking Permit,Transportation Policy & Planning Administration,DDOT
+S0336,Out of State Parking Violation (ROSA),PEMA- Parking Enforcement Management Administration,DPW
+S0346,Sanitation Enforcement,SWMA- Solid Waste Management Admistration,DPW
+S0361,Sidewalk Repair,Toa-Street & Bridge Maintenance,DDOT
+S0383,Snow Metro Bus,SNOW,DPW
+S0384,Snow Towing,SNOW,DPW
+S0391,Street Cleaning,SWMA- Solid Waste Management Admistration,DPW
+S0406,Roadway Repair,SIOD,DDOT
+S0422,Supercan - Delivery,SWMA- Solid Waste Management Admistration,DPW
+S0423,Supercan - Repair,SWMA- Solid Waste Management Admistration,DPW
+S0441,Trash Collection - Missed,SWMA- Solid Waste Management Admistration,DPW
+S0451,Trash Cart - Delivery,SWMA- Solid Waste Management Admistration,DPW
+S0457,Tree Inspection,Urban Forrestry,DDOT
+S0459,Tree Removal,Urban Forrestry,DDOT
+S0466,Utility Repair Issue,SIOD,DDOT
+S0471,Vacant Lot - Public Property Only,SWMA- Solid Waste Management Admistration,DPW
+S0477,Scheduled Yard Waste,SWMA- Solid Waste Management Administration,DPW
+S04TP,Tree Planting,Urban Forrestry,DDOT
+S05SL,Streetlight Repair Investigation,Transportation Operations Administration,DDOT
+SERVDCSNOW,Residential Snow Removal (ServeDC),Serve DC,Serve DC
+SIDEWLKEXP,Snow Sidewalk Shoveling Enforcement Exemption,SNOW,DPW
+SIGNMISS_v2,Roadway Signs,Unknown,DDOT
+SIGTRAMA,Traffic Signal Issue,Toa- Trans Sys Mnt,DDOT
+SNOWREMCOMP,Snow Removal Complaints for Sidewalks,SNOW,DPW
+SO392,Signed Street Sweeping Missed,SWMA- Solid Waste Management Admistration,DPW
+SPSTDAMA,Traffic Safety Input,Department of Transportation,DDOT
+SRC01,Snow Ice Removal from Bridges Sidewalks,SNOW,DPW
+SRC02,Snow/Ice Removal on Public Streets,SNOW,DPW
+SnowIceRP24,Snow and Ice Removal on Public Space,Unknown,DPW
+TRACO001,Trash Cart Repair,SWMA- Solid Waste Management Admistration,DPW
+Test01,Test,Unknown,DPW
+VACPROP,DOB - Vacant Private Property Inspection,Department of Buildings (DOB),DOB
+zTest1,Sample SR,Unknown,DPW
