@@ -511,7 +511,6 @@ def report_complaint(services: pd.DataFrame) -> None:
     coordinates: tuple[float, float] | None = st.session_state.get(
         "complaint_selected_coordinates"
     )
-    coordinates_are_valid = True
 
     _section_title("Complaint information", "STEP 1")
     info_col, description_col = st.columns([1, 1])
@@ -736,9 +735,7 @@ def report_complaint(services: pd.DataFrame) -> None:
             key="submit_complaint",
         )
     with hint_col:
-        if not coordinates_are_valid:
-            st.caption("Correct the coordinates or clear both optional coordinate fields.")
-        elif not form_is_valid:
+        if not form_is_valid:
             st.caption("Complete all required fields and confirm the incident location to continue.")
         elif coordinates is None:
             st.caption("Your address will be used for routing. Exact GPS coordinates are optional.")
