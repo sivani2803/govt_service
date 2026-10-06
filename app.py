@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import json
 import html
+import hashlib
+import os
 import re
+import sqlite3
 import warnings
 from io import BytesIO
 from datetime import datetime
+from typing import Any
 from urllib.parse import quote_plus
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import folium
 import plotly.express as px
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageOps
 from plotly.graph_objects import Figure
 from streamlit_folium import st_folium
 
@@ -20,14 +25,23 @@ from src.config import (
     APP_DATA_DIR,
     DEPARTMENT_HISTORY_PATH,
     DEPARTMENT_PRIORITY_HISTORY_PATH,
+    FEATURE_MEDIANS_PATH,
     MODEL_INFO,
+    PRIORITY_MODEL_PATH,
     PRIORITY_HISTORY_PATH,
+    PROJECT_CONFIG_PATH,
     SERVICE_LOOKUP_PATH,
     TOP_SERVICES_PATH,
+    UPLOADS_DIR,
     YEAR_HISTORY_PATH,
 )
 from src.location import browser_location
+from src.media import show_category_image_card, show_citizen_hero, show_relevant_image
+from src.map_style import make_civic_map
+from src.theme import inject_theme
+from src.ui_components import floating_action_markup, floating_action_target
 from src.notifications import create_agency_notification
+from src.authentication import authenticate_user, get_user_by_id, has_registered_users, register_citizen
 from src.predictor import load_predictor_assets, predict_priority
 from src.routing import load_routing_map, route_department
 from src.storage import (
@@ -36,194 +50,21 @@ from src.storage import (
     get_complaint_image_paths,
     list_complaints,
     list_notifications,
+    mark_notification_read,
     update_complaint_status,
 )
+from src.vision import analyze_civic_image
 
 st.set_page_config(
-    page_title="Government Service Request System",
+    page_title="CivicPulse | Turning civic signals into action",
     page_icon="🏛️",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-st.markdown(
-    """
-    <style>
-    :root {
-      --navy: #112f50; --blue: #1769aa; --blue-dark: #0e4d82; --ink: #172b40;
-      --muted: #63768a; --line: #e3eaf1; --canvas: #f3f6fa; --white: #fff;
-      --green: #18794e; --amber: #956000; --red: #a52a2a;
-    }
-    html, body, [class*="css"] { font-family: "Segoe UI", "Inter", Arial, sans-serif; color: var(--ink); }
-    .stApp { background: var(--canvas); }
-    [data-testid="stHeader"] { height: 2.1rem; background: transparent; }
-    [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] { display: none; }
-    [data-testid="stToolbar"], #MainMenu, footer { visibility: hidden; }
-    [data-testid="stMainBlockContainer"] { max-width: 1440px; padding: 1.25rem 2.3rem 4rem; }
-    h1, h2, h3, h4 { color: var(--ink); letter-spacing: -.025em; }
-    h1 { font-size: 1.9rem !important; font-weight: 720 !important; }
-    h2 { font-size: 1.35rem !important; font-weight: 700 !important; }
-    h3 { font-size: 1.07rem !important; font-weight: 680 !important; }
-    p, [data-testid="stMarkdownContainer"] { color: #344b62; }
-    [data-testid="stCaptionContainer"] { color: var(--muted); }
-    .block-container { padding-top: 1rem; }
-    .app-brand {
-      display:flex; align-items:center; gap:15px; min-height:67px;
-    }
-    .brand-seal {
-      width:52px; height:52px; border-radius:16px; display:flex; align-items:center;
-      justify-content:center; background:#eaf2f9; color:#123f68; border:1px solid #d6e4f0;
-      font-size:25px; box-shadow:0 2px 7px rgba(17,47,80,.07);
-    }
-    .brand-name { font-size:19px; line-height:1.2; font-weight:750; color:var(--navy); }
-    .brand-subtitle { font-size:12px; color:#677c90; margin-top:5px; letter-spacing:.015em; }
-    .brand-utility { text-align:right; color:#526a80; font-size:12px; line-height:1.65; }
-    .brand-utility strong { color:var(--navy); }
-    .brand-utility .live-dot { color:#188355; font-size:15px; vertical-align:-1px; }
-    .top-rule { height:1px; background:var(--line); margin:.55rem 0 .35rem; }
-    [data-testid="stRadio"] [role="radiogroup"] { gap:7px; flex-wrap:wrap; }
-    [data-testid="stRadio"] label[data-testid="stRadioOption"] {
-      border:1px solid transparent; border-radius:9px; background:transparent;
-      padding:8px 13px; transition:all .15s ease; min-height:39px;
-    }
-    [data-testid="stRadio"] label[data-testid="stRadioOption"]:hover {
-      background:#e9f1f8; border-color:#dce7f0;
-    }
-    [data-testid="stRadio"] label[data-testid="stRadioOption"] > div > div:first-child { display:none; }
-    [data-testid="stRadio"] label[data-testid="stRadioOption"] > div { display:flex; align-items:center; }
-    [data-testid="stRadio"] label[data-testid="stRadioOption"]:has(input:checked) {
-      color:#fff; background:var(--navy); border-color:var(--navy);
-      box-shadow:0 3px 8px rgba(17,47,80,.14);
-    }
-    [data-testid="stRadio"] label[data-testid="stRadioOption"] p { margin:0; color:#39536c; font-size:13px; font-weight:650; white-space:nowrap; }
-    [data-testid="stRadio"] label[data-testid="stRadioOption"]:has(input:checked) p { color:#fff; }
-    .portal-banner {
-      position:relative; overflow:hidden;
-      background:linear-gradient(112deg,#102f50 0%,#164b77 58%,#1d648f 100%);
-      color:white; padding:1.55rem 1.85rem; border-radius:16px;
-      margin:.3rem 0 1.4rem; box-shadow:0 10px 26px rgba(17,47,80,.14);
-    }
-    .portal-banner:after {
-      content:""; position:absolute; width:270px; height:270px; border:1px solid rgba(255,255,255,.12);
-      border-radius:50%; right:-70px; top:-145px; box-shadow:0 0 0 32px rgba(255,255,255,.035),0 0 0 66px rgba(255,255,255,.025);
-    }
-    .portal-banner {
-      color:white;
-    }
-    .portal-banner h1 { color:white; font-size:1.72rem !important; margin:0 0 .38rem; font-weight:740 !important; }
-    .portal-banner p { color:#d7e6f3; margin:0; font-size:.97rem; max-width:760px; }
-    .eyebrow { color:#668099; font-size:.72rem; font-weight:750; letter-spacing:.12em; text-transform:uppercase; margin-bottom:.45rem; }
-    .hero-panel {
-      position:relative; overflow:hidden; border-radius:20px; padding:2.05rem 2.2rem;
-      background:linear-gradient(112deg,#102f50,#185782); color:white;
-      box-shadow:0 13px 30px rgba(17,47,80,.16); margin:.3rem 0 1.45rem;
-    }
-    .hero-panel:after { content:""; position:absolute; width:330px; height:330px; right:-80px; top:-210px; border:1px solid rgba(255,255,255,.14); border-radius:50%; box-shadow:0 0 0 35px rgba(255,255,255,.035),0 0 0 72px rgba(255,255,255,.025); }
-    .hero-kicker { color:#b9d6eb; text-transform:uppercase; letter-spacing:.14em; font-size:.72rem; font-weight:700; }
-    .hero-title { color:white; font-size:2rem; line-height:1.18; font-weight:760; letter-spacing:-.035em; margin:.45rem 0 .55rem; }
-    .hero-copy { color:#d5e5f1; font-size:.96rem; max-width:640px; line-height:1.6; }
-    .section-heading { display:flex; align-items:center; gap:10px; margin:.35rem 0 .8rem; }
-    .section-heading h2 { margin:0; }
-    .section-kicker { font-size:.75rem; font-weight:700; color:#6e8397; text-transform:uppercase; letter-spacing:.1em; }
-    [data-testid="stMetric"] {
-      background:var(--white); border:1px solid var(--line); border-radius:13px;
-      padding:15px 17px; min-height:90px; box-shadow:0 2px 8px rgba(24,49,73,.035);
-    }
-    [data-testid="stMetricLabel"] p { color:#64788c !important; font-weight:600 !important; font-size:.8rem !important; }
-    [data-testid="stMetricValue"] { color:var(--navy) !important; font-weight:750; font-size:1.6rem !important; }
-    [data-testid="stPlotlyChart"] { background:#fff; border:1px solid var(--line); border-radius:14px; padding:8px; box-shadow:0 3px 12px rgba(24,49,73,.04); margin:.15rem 0 .8rem; }
-    [data-testid="stForm"] { background:#fff; border:1px solid var(--line); border-radius:15px; padding:1.15rem 1.3rem 1.25rem; box-shadow:0 4px 14px rgba(24,49,73,.045); }
-    [data-testid="stTextInput"] input:not(:disabled),
-    [data-testid="stTextArea"] textarea:not(:disabled),
-    [data-testid="stDateInput"] input:not(:disabled),
-    [data-testid="stTimeInput"] input:not(:disabled) {
-      color:#172b40 !important; -webkit-text-fill-color:#172b40 !important;
-      caret-color:#112f50 !important; background-color:#fff !important; opacity:1 !important;
-    }
-    [data-testid="stTextInput"] input:not(:disabled)::placeholder,
-    [data-testid="stTextArea"] textarea:not(:disabled)::placeholder,
-    [data-testid="stDateInput"] input:not(:disabled)::placeholder,
-    [data-testid="stTimeInput"] input:not(:disabled)::placeholder {
-      color:#68798a !important; -webkit-text-fill-color:#68798a !important; opacity:1 !important;
-    }
-    [data-testid="stSelectbox"] [data-baseweb="select"] > div {
-      border-radius:9px !important; border-color:#d5dfe8 !important; background:#fff !important;
-    }
-    [data-testid="stSelectbox"] [data-baseweb="select"] div,
-    [data-testid="stSelectbox"] [data-baseweb="select"] input {
-      color:#172b40 !important; -webkit-text-fill-color:#172b40 !important;
-    }
-    [data-testid="stSelectbox"] [data-baseweb="select"] input::placeholder {
-      color:#68798a !important; -webkit-text-fill-color:#68798a !important; opacity:1 !important;
-    }
-    [data-testid="stTextInput"] [data-baseweb="input"]:focus-within,
-    [data-testid="stTextArea"] [data-baseweb="textarea"]:focus-within,
-    [data-testid="stDateInput"] [data-baseweb="input"]:focus-within,
-    [data-testid="stTimeInput"] [data-baseweb="input"]:focus-within,
-    [data-testid="stSelectbox"] [data-baseweb="select"]:focus-within {
-      border-color:#2879ad !important; box-shadow:0 0 0 2px rgba(23,105,170,.18) !important;
-    }
-    [data-testid="stButton"] button, [data-testid="stFormSubmitButton"] button {
-      border-radius:9px; min-height:42px; font-weight:670; transition:all .15s ease;
-    }
-    [data-testid="stButton"] button[kind="primary"], [data-testid="stFormSubmitButton"] button[kind="primary"] {
-      background:var(--blue); border-color:var(--blue); box-shadow:0 3px 8px rgba(23,105,170,.16);
-    }
-    [data-testid="stButton"] button[kind="primary"]:hover, [data-testid="stFormSubmitButton"] button[kind="primary"]:hover { background:var(--blue-dark); border-color:var(--blue-dark); }
-    [data-testid="stLinkButton"] a { border-radius:9px; font-weight:650; }
-    [data-testid="stDataFrame"] { border:1px solid var(--line); border-radius:12px; overflow:hidden; }
-    .priority-high,.priority-medium,.priority-low,.status-badge {
-      display:inline-flex; align-items:center; border-radius:999px; padding:.3rem .7rem;
-      font-size:.77rem; font-weight:750; line-height:1.2; white-space:nowrap;
-    }
-    .priority-high { background:#fce8e8; color:var(--red); }
-    .priority-medium { background:#fff2d6; color:var(--amber); }
-    .priority-low { background:#e5f4eb; color:var(--green); }
-    .status-open { background:#e9f1f8; color:#285d86; }
-    .status-progress { background:#fff2d6; color:#805800; }
-    .status-resolved,.status-closed { background:#e5f4eb; color:#176642; }
-    .location-callout { border:1px solid #cfe0ee; border-left:4px solid #2873a8; border-radius:12px; background:#f3f8fc; padding:1rem 1.1rem; margin:.65rem 0; }
-    .location-callout strong { color:#173c5e; }
-    .case-card { background:#fff; border:1px solid var(--line); border-radius:14px; padding:1rem 1.15rem; margin:.55rem 0; box-shadow:0 3px 10px rgba(24,49,73,.04); }
-    .case-id { color:#1b5e90; font-weight:750; font-size:.88rem; }
-    .case-title { color:var(--navy); font-weight:700; font-size:1rem; margin:.34rem 0; }
-    .case-meta { color:#687d91; font-size:.81rem; line-height:1.6; }
-    .empty-state { text-align:center; background:#fff; border:1px dashed #cbd8e4; border-radius:16px; padding:2.3rem 1.4rem; margin:.8rem 0; }
-    .empty-icon { font-size:2rem; margin-bottom:.4rem; }
-    .empty-title { color:var(--navy); font-weight:720; font-size:1.05rem; }
-    .empty-copy { color:#6b7f91; max-width:470px; margin:.35rem auto 0; line-height:1.55; font-size:.9rem; }
-    .timeline { display:flex; align-items:flex-start; width:100%; margin:1.35rem 0 1.6rem; }
-    .timeline-step { position:relative; flex:1; text-align:center; padding:0 3px; color:#7a8b9c; font-size:.75rem; font-weight:620; }
-    .timeline-step:not(:last-child):after { content:""; position:absolute; left:calc(50% + 15px); right:calc(-50% + 15px); top:13px; height:2px; background:#d9e2ea; }
-    .timeline-step.complete:not(:last-child):after { background:#23835b; }
-    .timeline-dot { position:relative; z-index:1; width:27px; height:27px; border:2px solid #d3dee7; border-radius:50%; background:#fff; margin:0 auto 8px; display:flex; align-items:center; justify-content:center; font-size:.69rem; }
-    .timeline-step.complete { color:#286c4c; }
-    .timeline-step.complete .timeline-dot { border-color:#23835b; background:#e8f5ee; color:#18794e; }
-    .timeline-step.current { color:#174e79; font-weight:750; }
-    .timeline-step.current .timeline-dot { border-color:#1769aa; background:#1769aa; color:#fff; box-shadow:0 0 0 4px #e4f0f8; }
-    .success-panel { background:linear-gradient(135deg,#eef8f2,#fff); border:1px solid #cfe7d8; border-radius:17px; padding:1.4rem 1.5rem; margin:.8rem 0 1rem; }
-    .success-title { color:#176642; font-size:1.35rem; font-weight:760; }
-    .helper-panel { background:#edf5fb; border:1px solid #d8e8f4; border-radius:12px; padding:.9rem 1rem; color:#345873; font-size:.88rem; line-height:1.55; margin:.4rem 0 .9rem; }
-    [data-testid="stAlert"] { border-radius:11px; }
-    @media (max-width:900px) {
-      [data-testid="stMainBlockContainer"] { padding:.6rem 1rem 3rem; }
-      [data-testid="stRadio"] label[data-testid="stRadioOption"] { padding:7px 8px; }
-      [data-testid="stRadio"] label[data-testid="stRadioOption"] p { font-size:11px; }
-      .hero-title { font-size:1.65rem; }
-    }
-    @media (max-width:620px) {
-      [data-testid="stMainBlockContainer"] { padding:.4rem .75rem 2.4rem; }
-      .brand-name { font-size:16px; }
-      .brand-seal { width:43px; height:43px; }
-      .brand-utility { font-size:10px; }
-      .portal-banner { padding:1.2rem 1.25rem; }
-      .timeline-step { font-size:.62rem; }
-      .timeline-dot { width:23px; height:23px; }
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+inject_theme()
+
+APP_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
 
 @st.cache_data(show_spinner=False)
@@ -247,7 +88,7 @@ def load_service_lookup() -> pd.DataFrame:
 
 def _header(title: str, subtitle: str) -> None:
     st.markdown(
-        f'<div class="portal-banner"><div class="eyebrow" style="color:#b9d5ee">DISTRICT SERVICE REQUEST SYSTEM</div>'
+        f'<div class="portal-banner"><div class="eyebrow" style="color:#b9d5ee">CIVICPULSE · CIVIC OPERATIONS</div>'
         f"<h1>{title}</h1><p>{subtitle}</p></div>",
         unsafe_allow_html=True,
     )
@@ -283,11 +124,14 @@ def _empty_state(title: str, message: str, icon: str = "◇") -> None:
 
 def _status_badge(status: str) -> str:
     style = {
-        "Open": "status-open",
-        "In Progress": "status-progress",
-        "Resolved": "status-resolved",
-        "Closed": "status-closed",
-    }.get(status, "status-open")
+        "new": "status-new",
+        "open": "status-new",
+        "assigned": "status-assigned",
+        "in progress": "status-progress",
+        "resolved": "status-resolved",
+        "rejected": "status-rejected",
+        "closed": "status-closed",
+    }.get(str(status).strip().casefold(), "status-new")
     return f'<span class="status-badge {style}">{html.escape(status)}</span>'
 
 
@@ -304,16 +148,20 @@ def _case_card(request: pd.Series | dict[str, object]) -> None:
     pincode = html.escape(str(request.get("ZIPCODE", "")).strip())
     department = html.escape(str(request.get("PREDICTED_DEPARTMENT", "Unassigned")))
     submitted = html.escape(str(request.get("ADDDATE", "")))
-    st.markdown(
-        f'<div class="case-card"><div class="case-id">{request_id}</div>'
-        f'<div class="case-title">{service}</div>'
-        f'<div class="case-meta">{_priority_badge(str(request.get("PREDICTED_PRIORITY", "")))}'
-        f' &nbsp; {_status_badge(str(request.get("STATUS", "Open")))}</div>'
-        f'<div class="case-meta" style="margin-top:9px">⌖ &nbsp;{place or "Location recorded"}'
-        f'{f" · PIN {pincode}" if pincode else ""}'
-        f'<br>▣ &nbsp;{department} &nbsp; · &nbsp; ◷ &nbsp;{submitted}</div></div>',
-        unsafe_allow_html=True,
-    )
+    media_col, details_col = st.columns([1, 3.2], vertical_alignment="center")
+    with media_col:
+        show_relevant_image(str(request.get("SERVICECODEDESCRIPTION", "Civic service")), width=175)
+    with details_col:
+        st.markdown(
+            f'<div class="case-card"><div class="case-id">{request_id}</div>'
+            f'<div class="case-title">{service}</div>'
+            f'<div class="case-meta">{_priority_badge(str(request.get("PREDICTED_PRIORITY", "")))}'
+            f' &nbsp; {_status_badge(str(request.get("STATUS", "Open")))}</div>'
+            f'<div class="case-meta" style="margin-top:9px">⌖ &nbsp;{place or "Location recorded"}'
+            f'{f" · PIN {pincode}" if pincode else ""}'
+            f'<br>▣ &nbsp;{department} &nbsp; · &nbsp; ◷ &nbsp;{submitted}</div></div>',
+            unsafe_allow_html=True,
+        )
 
 
 def _read_summary(path: str) -> pd.DataFrame:
@@ -322,20 +170,20 @@ def _read_summary(path: str) -> pd.DataFrame:
 
 def _render_chart(figure: Figure) -> None:
     figure.update_layout(
-        template="plotly_white",
+        template="plotly_dark",
         height=340,
         margin={"l": 20, "r": 20, "t": 55, "b": 30},
-        title={"x": 0.03, "xanchor": "left", "font": {"size": 15, "color": "#173b5b"}},
-        font={"family": "Segoe UI, Arial, sans-serif", "color": "#526a80", "size": 11},
-        xaxis={"tickfont": {"color": "#526a80"}, "title_font": {"color": "#526a80"}, "gridcolor": "#edf1f5"},
-        yaxis={"tickfont": {"color": "#526a80"}, "title_font": {"color": "#526a80"}, "gridcolor": "#edf1f5"},
-        legend={"font": {"color": "#526a80"}},
+        title={"x": 0.03, "xanchor": "left", "font": {"size": 15, "color": "#dce8f5"}},
+        font={"family": "Segoe UI, Arial, sans-serif", "color": "#aab5c4", "size": 11},
+        xaxis={"tickfont": {"color": "#aab5c4"}, "title_font": {"color": "#aab5c4"}, "gridcolor": "#263240"},
+        yaxis={"tickfont": {"color": "#aab5c4"}, "title_font": {"color": "#aab5c4"}, "gridcolor": "#263240"},
+        legend={"font": {"color": "#aab5c4"}},
         coloraxis_colorbar={
-            "title": {"font": {"color": "#526a80"}},
-            "tickfont": {"color": "#526a80"},
+            "title": {"font": {"color": "#aab5c4"}},
+            "tickfont": {"color": "#aab5c4"},
         },
-        paper_bgcolor="#ffffff",
-        plot_bgcolor="#ffffff",
+        paper_bgcolor="#0d1118",
+        plot_bgcolor="#0d1118",
     )
     st.plotly_chart(
         figure,
@@ -347,11 +195,12 @@ def _render_chart(figure: Figure) -> None:
 def _priority_badge(priority: str) -> str:
     normalized = str(priority).strip().lower()
     style = {
+        "critical": "priority-critical",
         "high": "priority-high",
         "medium": "priority-medium",
         "low": "priority-low",
     }.get(normalized, "priority-medium")
-    return f'<span class="{style}">{priority}</span>'
+    return f'<span class="{style}">{html.escape(str(priority))}</span>'
 
 
 def _location_map_url(latitude: object, longitude: object, address: str = "") -> str | None:
@@ -360,6 +209,37 @@ def _location_map_url(latitude: object, longitude: object, address: str = "") ->
     if address.strip():
         return f"https://www.google.com/maps/search/?api=1&query={quote_plus(address)}"
     return None
+
+
+def _validated_uploads(files: list[Any] | None) -> tuple[list[tuple[str, bytes]], list[str], list[str]]:
+    accepted: list[tuple[str, bytes]] = []
+    names: list[str] = []
+    errors: list[str] = []
+    selected = files or []
+    if len(selected) > 5:
+        errors.append("A maximum of 5 photos may be attached to one request.")
+    for uploaded_file in selected:
+        image_data = uploaded_file.getvalue()
+        if uploaded_file.size > 5 * 1024 * 1024:
+            errors.append(f"{uploaded_file.name} exceeds the 5 MB per-image limit.")
+            continue
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                with Image.open(BytesIO(image_data)) as image:
+                    image_format = image.format
+                    if image_format not in {"JPEG", "PNG", "WEBP"}:
+                        raise ValueError("Only JPG, JPEG, PNG, and WEBP image content is accepted.")
+                    if image.width * image.height > 25_000_000:
+                        raise ValueError("The image dimensions exceed the supported limit.")
+                    image.verify()
+        except (OSError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+            errors.append(f"{uploaded_file.name} is not a supported image: {exc}")
+            continue
+        extension = {"PNG": "png", "WEBP": "webp"}.get(image_format, "jpg")
+        accepted.append((extension, image_data))
+        names.append(uploaded_file.name)
+    return accepted, names, errors
 
 
 @st.dialog("Problem photo", width="large")
@@ -377,13 +257,20 @@ def _render_problem_photos(complaint: dict[str, str], key_prefix: str) -> None:
     if not image_paths:
         st.caption("No photos were attached to this request.")
         return
+    try:
+        photo_notes = json.loads(complaint.get("IMAGE_ANNOTATIONS", "[]") or "[]")
+    except json.JSONDecodeError:
+        photo_notes = []
+    if not isinstance(photo_notes, list):
+        photo_notes = []
 
     photo_columns = st.columns(min(3, len(image_paths)))
     for index, image_path in enumerate(image_paths):
         column = photo_columns[index % len(photo_columns)]
+        note = str(photo_notes[index]).strip() if index < len(photo_notes) else ""
         column.image(
             str(image_path),
-            caption=f"Problem photo {index + 1}",
+            caption=f"Problem photo {index + 1}" + (f" · {note}" if note else ""),
             width="stretch",
         )
         if column.button(
@@ -394,12 +281,64 @@ def _render_problem_photos(complaint: dict[str, str], key_prefix: str) -> None:
             _show_problem_photo(str(image_path), f"Problem photo {index + 1}")
 
 
-def citizen_dashboard() -> None:
+def _render_resolution_photos(complaint: dict[str, str], key_prefix: str) -> None:
+    try:
+        image_paths = get_complaint_image_paths(complaint, key="RESOLUTION_IMAGE_PATHS")
+        inspection_paths = get_complaint_image_paths(complaint, key="INSPECTION_IMAGE_PATHS")
+    except (OSError, ValueError) as exc:
+        st.error(f"Resolution evidence could not be loaded: {exc}")
+        return
+    if not image_paths and not inspection_paths:
+        return
+    before_paths = get_complaint_image_paths(complaint)
+    _section_title("Field evidence", "BEFORE → DURING → AFTER")
+    before_col, inspection_col, after_col = st.columns(3)
+    with before_col:
+        st.markdown("**Reported before**")
+        if before_paths:
+            st.image(str(before_paths[0]), caption="Citizen evidence", width="stretch")
+        else:
+            st.caption("No before photo was attached.")
+    with inspection_col:
+        st.markdown("**Inspection during**")
+        if inspection_paths:
+            st.image([str(path) for path in inspection_paths], caption=[f"Inspection photo {i + 1}" for i in range(len(inspection_paths))], width="stretch")
+        else:
+            st.caption("No inspection photo was attached.")
+    with after_col:
+        st.markdown("**Submitted after**")
+        if image_paths:
+            st.image([str(path) for path in image_paths], caption=[f"Resolution photo {i + 1}" for i in range(len(image_paths))], width="stretch")
+        else:
+            st.caption("No resolution photo was attached.")
+
+
+def _coordinates_frame(complaints: pd.DataFrame) -> pd.DataFrame:
+    if complaints.empty or not {"LATITUDE", "LONGITUDE"}.issubset(complaints.columns):
+        return pd.DataFrame()
+    points = complaints.copy()
+    points["LATITUDE"] = pd.to_numeric(points["LATITUDE"], errors="coerce")
+    points["LONGITUDE"] = pd.to_numeric(points["LONGITUDE"], errors="coerce")
+    points = points.dropna(subset=["LATITUDE", "LONGITUDE"])
+    return points[
+        points["LATITUDE"].between(-90, 90)
+        & points["LONGITUDE"].between(-180, 180)
+    ]
+
+
+def _local_dates(values: pd.Series) -> pd.Series:
+    return pd.to_datetime(values, errors="coerce", utc=True).dt.tz_convert(APP_TIMEZONE).dt.date
+
+
+def citizen_dashboard(services: pd.DataFrame) -> None:
+    show_citizen_hero()
     st.markdown(
-        '<div class="hero-panel"><div class="hero-kicker">A simpler way to reach your city</div>'
-        '<div class="hero-title">Report. Track. Resolve.</div>'
-        '<div class="hero-copy">Report government service issues, see which department is responsible, '
-        'and follow every update from submission to resolution.</div></div>',
+        '<div class="flow-strip" aria-label="CivicPulse service request flow">'
+        '<div class="flow-step"><strong>01 · Report</strong><span>Describe the issue, attach evidence, and confirm its location.</span></div>'
+        '<div class="flow-step"><strong>02 · Assess</strong><span>A saved priority model estimates urgency; staff review every case.</span></div>'
+        '<div class="flow-step"><strong>03 · Route</strong><span>The service code selects its mapped department.</span></div>'
+        '<div class="flow-step"><strong>04 · Resolve</strong><span>Staff record progress and may attach completion evidence.</span></div>'
+        '</div>',
         unsafe_allow_html=True,
     )
     complaints = list_complaints()
@@ -444,9 +383,45 @@ def citizen_dashboard() -> None:
                 }[action])
                 st.rerun()
 
-    _section_title("Recent requests", "YOUR ACTIVITY")
-    if total:
-        recent = complaints.sort_values("ADDDATE", ascending=False).head(5)
+    category_patterns = {
+        "Roads": r"pothole|road|roadway|sidewalk|street repair",
+        "Water": r"water|leak|hydrant|pipe|flood",
+        "Waste": r"trash|waste|garbage|litter|sanitation",
+        "Streetlights": r"street.?light|streetlight|lighting",
+        "Drainage": r"drain|sewer|sewage|catch basin",
+    }
+    available_categories: list[tuple[str, pd.Series]] = []
+    descriptions = services["SERVICECODEDESCRIPTION"].fillna("").astype(str)
+    for category, pattern in category_patterns.items():
+        matches = services[descriptions.str.contains(pattern, case=False, regex=True)]
+        if not matches.empty:
+            available_categories.append((category, matches.iloc[0]))
+    if available_categories:
+        _section_title("Report by service area", "SUPPORTED CATEGORIES")
+        category_cols = st.columns(min(5, len(available_categories)))
+        category_icons = {"Roads": "⌁", "Water": "◉", "Waste": "♻", "Streetlights": "✦", "Drainage": "⌄"}
+        for index, (category, service_row) in enumerate(available_categories):
+            with category_cols[index % len(category_cols)]:
+                show_category_image_card(category, icon=category_icons.get(category, "◇"))
+                st.markdown(
+                    f'<div class="case-card category-card-details" style="min-height:120px">'
+                    f'<div class="case-title">{html.escape(category)}</div>'
+                    f'<div class="case-meta">{html.escape(str(service_row["SERVICECODEDESCRIPTION"]))}<br>'
+                    f'Routed to {html.escape(route_department(str(service_row["SERVICECODE"])))}</div></div>',
+                    unsafe_allow_html=True,
+                )
+                if st.button("Report this issue →", key=f"category_{category}", width="stretch"):
+                    st.session_state["complaint_service_code"] = str(service_row["SERVICECODE"])
+                    _go_to_page("Report Complaint")
+                    st.rerun()
+
+    _section_title("Recent requests", "THIS BROWSER SESSION")
+    citizen_request_ids = set(st.session_state.get("citizen_request_ids", []))
+    recent = complaints[
+        complaints["SERVICEREQUESTID"].astype(str).isin(citizen_request_ids)
+    ].sort_values("ADDDATE", ascending=False)
+    if not recent.empty:
+        recent = recent.head(5)
         for _, request in recent.iterrows():
             _case_card(request)
         if st.button("View request tracking", width="content"):
@@ -454,13 +429,23 @@ def citizen_dashboard() -> None:
             st.rerun()
     else:
         _empty_state(
-            "No service requests yet",
-            "When you submit a complaint, it will appear here with its assigned department and current status.",
+            "No reports in this browser session",
+            "Submit a report here or use its request ID on the tracking page to view progress.",
             "⌂",
         )
 
 
 def report_complaint(services: pd.DataFrame) -> None:
+    if st.session_state.pop("reset_report_form", False):
+        for key in (
+            "last_submission", "complaint_service_code", "complaint_details",
+            "complaint_citizen_urgency", "complaint_problem_photos", "complaint_address",
+            "complaint_city", "complaint_state", "complaint_pincode", "complaint_ward",
+            "complaint_selected_coordinates", "complaint_location_method",
+            "complaint_location_confirmed", "complaint_browser_location", "_last_browser_location",
+            "complaint_map_center", "complaint_map_wide_view",
+        ):
+            st.session_state.pop(key, None)
     _header("Report a complaint", "Tell us what needs attention and where the service request occurred.")
     if st.session_state.get("last_submission"):
         result = st.session_state["last_submission"]
@@ -469,6 +454,14 @@ def report_complaint(services: pd.DataFrame) -> None:
             '<div style="color:#456c56;margin-top:5px">Your complaint has been recorded and routed to the responsible department.</div></div>',
             unsafe_allow_html=True,
         )
+        if result.get("vision_analysis"):
+            st.markdown("#### Image review")
+            for index, analysis in enumerate(result["vision_analysis"], start=1):
+                st.info(
+                    f"**{analysis['engine']}** · Photo {index}: "
+                    "image metadata recorded; no defect classification or confidence score was generated. "
+                    "An officer should review the evidence."
+                )
         if result.get("notification_error"):
             st.warning(
                 f"Your request is saved, but its agency inbox notification could not be recorded: "
@@ -477,16 +470,21 @@ def report_complaint(services: pd.DataFrame) -> None:
         else:
             st.success("Agency inbox notification created.")
         st.markdown(f"### Request **{html.escape(result['request_id'])}**")
-        result_cols = st.columns(4)
+        result_cols = st.columns(5)
         result_cols[0].metric("Request ID", result["request_id"])
         result_cols[1].metric("Assigned department", result["department"])
         result_cols[2].markdown(
-            f"**Predicted priority**<br>{_priority_badge(result['priority'])}",
+            f"**Model priority estimate**<br>{_priority_badge(result['priority'])}",
             unsafe_allow_html=True,
         )
-        result_cols[3].markdown(
+        result_cols[3].metric("Selected-class model score", f"{result['priority_score']:.1%}")
+        result_cols[4].markdown(
             f"**Current status**<br>{_status_badge('Open')}",
             unsafe_allow_html=True,
+        )
+        st.caption(
+            "Priority is decision support from a model trained on historical Washington, DC 311 data; "
+            "it has not been validated for Indian service requests. It is not a vision confidence score."
         )
         st.markdown(
             f'<div class="location-callout"><strong>⌖ &nbsp;Reported location</strong><br>'
@@ -497,7 +495,7 @@ def report_complaint(services: pd.DataFrame) -> None:
         if result.get("latitude") is not None and result.get("longitude") is not None:
             st.caption(f"Coordinates: {result['latitude']}, {result['longitude']}")
         if st.button("＋  Submit another complaint", type="primary"):
-            st.session_state.pop("last_submission", None)
+            st.session_state["reset_report_form"] = True
             st.rerun()
         return
 
@@ -505,6 +503,14 @@ def report_complaint(services: pd.DataFrame) -> None:
         '<div class="helper-panel"><strong>⌖ &nbsp;Location is required</strong> because the responsible '
         'department depends on where the issue occurred. Your address is required even when GPS is available. '
         'Coordinates are optional; you can still submit manually if location services are unavailable.</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="flow-strip" aria-label="Report steps">'
+        '<div class="flow-step"><strong>01 · Details</strong><span>Choose a service and describe the issue.</span></div>'
+        '<div class="flow-step"><strong>02 · Location</strong><span>Enter the address and optionally place a pin.</span></div>'
+        '<div class="flow-step"><strong>03 · Review</strong><span>Confirm the report before it is routed.</span></div>'
+        '</div>',
         unsafe_allow_html=True,
     )
     service_codes = [""] + services["SERVICECODE"].tolist()
@@ -530,11 +536,12 @@ def report_complaint(services: pd.DataFrame) -> None:
     with description_col:
         if service_code:
             service_preview = services.loc[services["SERVICECODE"] == service_code].iloc[0]
-            st.text_input(
-                "Service description",
-                value=str(service_preview["SERVICECODEDESCRIPTION"]),
-                disabled=True,
-                key="service_type_preview",
+            show_relevant_image(str(service_preview["SERVICECODEDESCRIPTION"]))
+            st.markdown(
+                f'<div class="glass-card" style="padding:.8rem 1rem;margin-top:.35rem">'
+                f'<div class="case-title">{html.escape(str(service_preview["SERVICECODEDESCRIPTION"]))}</div>'
+                f'<div class="case-meta">Routed to {html.escape(route_department(service_code))}</div></div>',
+                unsafe_allow_html=True,
             )
         else:
             st.markdown(
@@ -555,53 +562,54 @@ def report_complaint(services: pd.DataFrame) -> None:
         max_chars=3000,
         key="complaint_details",
     )
+    citizen_urgency = st.selectbox(
+        "How urgent does this feel to you?",
+        ["Low", "Medium", "High"],
+        index=1,
+        key="complaint_citizen_urgency",
+        help="Your assessment is recorded separately and does not change the model prediction.",
+    )
     _section_title("Photos of the Problem (Optional)", "OPTIONAL")
     st.caption("Upload clear photos showing the issue. These photos will be visible to the assigned agency.")
-    st.caption("Upload up to 5 JPG, JPEG, or PNG images (maximum 5 MB each). Remove a file from the upload list before submitting.")
+    st.caption("Upload up to 5 JPG, JPEG, PNG, or WEBP images (maximum 5 MB each). Remove a file from the upload list before submitting.")
     uploaded_files = st.file_uploader(
         "Add problem photos",
-        type=["jpg", "jpeg", "png"],
+        type=["jpg", "jpeg", "png", "webp"],
         accept_multiple_files=True,
         max_upload_size=5,
         key="complaint_problem_photos",
     )
-    uploaded_images: list[tuple[str, bytes]] = []
-    uploaded_image_names: list[str] = []
-    image_validation_errors: list[str] = []
-    selected_files = uploaded_files or []
-    if len(selected_files) > 5:
-        image_validation_errors.append("A maximum of 5 photos may be attached to one complaint.")
-    for uploaded_file in selected_files:
-        image_data = uploaded_file.getvalue()
-        if uploaded_file.size > 5 * 1024 * 1024:
-            image_validation_errors.append(f"{uploaded_file.name} exceeds the 5 MB per-image limit.")
-            continue
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", Image.DecompressionBombWarning)
-                with Image.open(BytesIO(image_data)) as image:
-                    image_format = image.format
-                    if image_format not in {"JPEG", "PNG"}:
-                        raise ValueError("Only JPG, JPEG, and PNG image content is accepted.")
-                    if image.width * image.height > 25_000_000:
-                        raise ValueError("The image dimensions exceed the supported limit.")
-                    image.verify()
-        except (OSError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
-            image_validation_errors.append(f"{uploaded_file.name} is not a supported image: {exc}")
-            continue
-        extension = "png" if image_format == "PNG" else "jpg"
-        uploaded_images.append((extension, image_data))
-        uploaded_image_names.append(uploaded_file.name)
+    uploaded_images, uploaded_image_names, image_validation_errors = _validated_uploads(uploaded_files)
 
     for image_error in image_validation_errors:
         st.error(image_error)
+    photo_annotations: list[str] = []
     if uploaded_images:
+        st.success(f"{len(uploaded_images)} photo{'s' if len(uploaded_images) != 1 else ''} ready to attach.")
+        preview_framing = st.radio(
+            "Preview framing",
+            ["Full photo", "Square crop"],
+            horizontal=True,
+            key="complaint_photo_preview_framing",
+            help="Changes the thumbnail preview only. CivicPulse submits each original image unchanged.",
+        )
+        st.caption("The selected framing affects thumbnails only; original photos are preserved for the agency.")
         preview_columns = st.columns(min(3, len(uploaded_images)))
         for index, ((_, image_data), filename) in enumerate(zip(uploaded_images, uploaded_image_names)):
-            preview_columns[index % len(preview_columns)].image(
-                image_data,
-                caption=filename,
-                width="stretch",
+            with Image.open(BytesIO(image_data)) as uploaded_image:
+                preview_image = ImageOps.exif_transpose(uploaded_image).copy()
+                if preview_framing == "Square crop":
+                    preview_image = ImageOps.fit(preview_image, (800, 800), method=Image.Resampling.LANCZOS)
+            preview_column = preview_columns[index % len(preview_columns)]
+            preview_column.image(preview_image, caption=filename, width="stretch")
+            note_key = hashlib.sha256(image_data).hexdigest()[:12]
+            photo_annotations.append(
+                preview_column.text_input(
+                    f"Photo {index + 1} note (optional)",
+                    placeholder="Point out what this photo shows",
+                    max_chars=240,
+                    key=f"complaint_photo_note_{note_key}_{index}",
+                ).strip()
             )
 
     _section_title("Where did this happen?", "STEP 2")
@@ -627,6 +635,12 @@ def report_complaint(services: pd.DataFrame) -> None:
         key="complaint_state",
     )
     pincode = pin_col.text_input("PIN Code *", placeholder="520001", max_chars=6, key="complaint_pincode")
+    ward = st.text_input(
+        "Ward / service zone (optional)",
+        placeholder="Enter your ward name or number if known",
+        max_chars=100,
+        key="complaint_ward",
+    )
     address_parts = [address.strip(), city.strip(), state.strip(), pincode.strip()]
     pincode_is_valid = bool(re.fullmatch(r"[1-9]\d{5}", pincode.strip()))
     address_is_complete = all(address_parts)
@@ -636,20 +650,37 @@ def report_complaint(services: pd.DataFrame) -> None:
         "Click anywhere on the map to place a pin. The required address remains sufficient "
         "to submit if you do not need exact coordinates."
     )
-    gps = browser_location(key="complaint_browser_location")
+    map_controls = st.columns([1.3, 1.1, 2])
+    india_center = (20.5937, 78.9629)
+    with map_controls[0]:
+        gps = browser_location(key="complaint_browser_location")
+    with map_controls[1]:
+        reset_map_view = st.button("Reset map view", key="complaint_reset_map_view", width="stretch")
+    if reset_map_view:
+        st.session_state["complaint_map_center"] = india_center
+        st.session_state["complaint_map_wide_view"] = True
+        st.rerun()
     if isinstance(gps, dict) and gps.get("latitude") is not None and gps.get("longitude") is not None:
-        browser_coordinates = (float(gps["latitude"]), float(gps["longitude"]))
-        if browser_coordinates != st.session_state.get("_last_browser_location"):
+        try:
+            browser_coordinates = (float(gps["latitude"]), float(gps["longitude"]))
+        except (TypeError, ValueError):
+            browser_coordinates = None
+        if (
+            browser_coordinates
+            and -90 <= browser_coordinates[0] <= 90
+            and -180 <= browser_coordinates[1] <= 180
+            and browser_coordinates != st.session_state.get("_last_browser_location")
+        ):
             st.session_state["complaint_selected_coordinates"] = browser_coordinates
             st.session_state["complaint_location_method"] = "Browser GPS"
             st.session_state["_last_browser_location"] = browser_coordinates
+            st.session_state["complaint_map_center"] = browser_coordinates
+            st.session_state["complaint_map_wide_view"] = False
             coordinates = browser_coordinates
-    india_center = (20.5937, 78.9629)
-    map_object = folium.Map(
-        location=coordinates or india_center,
-        zoom_start=14 if coordinates else 5,
-        tiles="OpenStreetMap",
-        control_scale=True,
+    map_center = st.session_state.get("complaint_map_center", coordinates or india_center)
+    map_object = make_civic_map(
+        location=map_center,
+        zoom_start=5 if st.session_state.get("complaint_map_wide_view") else (14 if coordinates else 5),
     )
     if coordinates:
         folium.Marker(
@@ -670,6 +701,8 @@ def report_complaint(services: pd.DataFrame) -> None:
         if clicked_coordinates != coordinates:
             st.session_state["complaint_selected_coordinates"] = clicked_coordinates
             st.session_state["complaint_location_method"] = "Map pin"
+            st.session_state["complaint_map_center"] = clicked_coordinates
+            st.session_state["complaint_map_wide_view"] = False
             st.rerun()
     if coordinates:
         st.success("Exact location selected")
@@ -715,6 +748,21 @@ def report_complaint(services: pd.DataFrame) -> None:
         unsafe_allow_html=True,
     )
 
+    _section_title("Review your report", "STEP 3")
+    review_category = str(
+        services.loc[services["SERVICECODE"] == service_code, "SERVICECODEDESCRIPTION"].iloc[0]
+    ) if service_code else "Choose a service category"
+    review_location = ", ".join(part for part in [address.strip(), city.strip(), state.strip(), pincode.strip()] if part)
+    review_location = review_location or "Add the incident address"
+    st.markdown(
+        f'<div class="glass-card" style="padding:1rem 1.15rem">'
+        f'<div class="case-title">{html.escape(review_category)}</div>'
+        f'<div class="case-meta">{html.escape(review_location)}<br>'
+        f'{len(uploaded_images)} photo(s) · Citizen-stated urgency: {html.escape(citizen_urgency)} · '
+        f'{"Exact pin selected" if coordinates else "Address-based location"}</div></div>',
+        unsafe_allow_html=True,
+    )
+
     form_is_valid = bool(
         service_code
         and details.strip()
@@ -753,7 +801,7 @@ def report_complaint(services: pd.DataFrame) -> None:
         "SERVICECODE": str(service["SERVICECODE"]),
         "SERVICECODEDESCRIPTION": str(service["SERVICECODEDESCRIPTION"]),
         "SERVICETYPECODEDESCRIPTION": str(service["SERVICETYPECODEDESCRIPTION"]),
-        "WARD": "",
+        "WARD": ward.strip(),
         "ZIPCODE": pincode.strip(),
         "LATITUDE": latitude,
         "LONGITUDE": longitude,
@@ -783,7 +831,21 @@ def report_complaint(services: pd.DataFrame) -> None:
             "LOW_PROBABILITY": probabilities["Low"],
             "MEDIUM_PROBABILITY": probabilities["Medium"],
             "STATUS": "Open",
+            "CITIZEN_URGENCY": citizen_urgency,
+            "AI_CONFIDENCE": probabilities[priority],
         }
+        vision_results = [
+            analyze_civic_image(
+                image_data,
+                service_code=str(service["SERVICECODE"]),
+                service_name=str(service["SERVICECODEDESCRIPTION"]),
+            )
+            for _, image_data in uploaded_images
+        ]
+        if vision_results:
+            complaint["AI_VISION_TAG"] = json.dumps(vision_results, separators=(",", ":"))
+        if uploaded_images:
+            complaint["IMAGE_ANNOTATIONS"] = json.dumps(photo_annotations, ensure_ascii=False, separators=(",", ":"))
         saved = add_complaint(complaint, submitted_at, uploaded_images)
     except (OSError, ValueError, KeyError, RuntimeError) as exc:
         st.error(f"The request could not be completed: {exc}")
@@ -799,6 +861,7 @@ def report_complaint(services: pd.DataFrame) -> None:
         "request_id": saved["SERVICEREQUESTID"],
         "department": department,
         "priority": priority,
+        "priority_score": probabilities[priority],
         "address": address.strip(),
         "city": city.strip(),
         "state": state.strip(),
@@ -806,7 +869,11 @@ def report_complaint(services: pd.DataFrame) -> None:
         "latitude": latitude,
         "longitude": longitude,
         "notification_error": str(notification_error) if notification_error is not None else "",
+        "vision_analysis": vision_results,
     }
+    known_request_ids = list(st.session_state.get("citizen_request_ids", []))
+    known_request_ids.append(saved["SERVICEREQUESTID"])
+    st.session_state["citizen_request_ids"] = list(dict.fromkeys(known_request_ids))
     st.rerun()
 
 
@@ -823,17 +890,44 @@ def _parse_status_history(value: object) -> list[dict[str, str]]:
 
 
 def _render_timeline(status: str, events: list[dict[str, str]]) -> None:
-    stage_for_status = {"Open": 2, "In Progress": 3, "Resolved": 4, "Closed": 5}
-    current_stage = stage_for_status.get(status, 0)
-    event_by_name = {event.get("event"): event.get("timestamp", "") for event in events}
+    stage_for_status = {"Open": 3, "In Progress": 5, "Resolved": 6, "Closed": 7}
+    event_aliases = {
+        "Submitted": "Report submitted",
+        "Priority estimate generated": "Priority estimate",
+        "AI Assessment Completed": "Priority estimate",
+        "Department Assigned": "Department assigned",
+        "Agency Notified": "Agency notified",
+        "Officer Assigned": "Officer assigned",
+        "Inspection Started": "Inspection started",
+        "Field Inspection Evidence Uploaded": "Inspection started",
+        "In Progress": "Inspection started",
+        "Resolution Submitted": "Resolution submitted",
+        "Resolution Evidence Uploaded": "Resolution submitted",
+        "Resolved": "Resolution submitted",
+        "Request Closed": "Request closed",
+        "Closed": "Request closed",
+    }
+    event_by_name = {
+        event_aliases[event.get("event", "")]: event.get("timestamp", "")
+        for event in events
+        if isinstance(event, dict) and event.get("event", "") in event_aliases
+    }
     steps = [
-        "Submitted",
-        "Department Assigned",
-        "Agency Notified",
-        "In Progress",
-        "Resolved",
-        "Closed",
+        "Report submitted",
+        "Priority estimate",
+        "Department assigned",
+        "Agency notified",
+        "Officer assigned",
+        "Inspection started",
+        "Resolution submitted",
+        "Request closed",
     ]
+    latest_event_stage = max(
+        (steps.index(event_aliases[event.get("event", "")]) for event in events
+         if isinstance(event, dict) and event.get("event", "") in event_aliases),
+        default=0,
+    )
+    current_stage = max(stage_for_status.get(status, 0), latest_event_stage)
     step_html: list[str] = []
     for index, event_name in enumerate(steps):
         complete = index < current_stage
@@ -844,9 +938,7 @@ def _render_timeline(status: str, events: list[dict[str, str]]) -> None:
         if current:
             classes += " current"
         timestamp = event_by_name.get(event_name)
-        if index <= 2 and current_stage >= 2 and not timestamp:
-            timestamp = "Recorded"
-        detail = html.escape(timestamp) if timestamp else ("Current stage" if current else "Pending")
+        detail = html.escape(timestamp) if timestamp else ("Completed" if complete else "Current stage" if current else "Pending")
         step_html.append(
             f'<div class="{classes}"><div class="timeline-dot">{"✓" if complete else index + 1}</div>'
             f'<div>{html.escape(event_name)}</div><div style="font-size:.65rem;font-weight:450;margin-top:3px">{detail}</div></div>'
@@ -927,10 +1019,24 @@ def show_tracking(request_id: str) -> None:
             unsafe_allow_html=True,
         )
     _render_problem_photos(complaint, "tracking")
+    _render_resolution_photos(complaint, "tracking_resolution")
+    if complaint.get("RESOLUTION_NOTES", "").strip():
+        st.markdown(
+            f'<div class="success-panel"><strong>Resolution update</strong><br>'
+            f'{html.escape(complaint["RESOLUTION_NOTES"])}</div>',
+            unsafe_allow_html=True,
+        )
 
 
 def agency_portal() -> None:
+    clear_evidence_for = st.session_state.pop("clear_agency_evidence_for", "")
+    if clear_evidence_for:
+        st.session_state.pop(f"inspection_evidence_{clear_evidence_for}", None)
+        st.session_state.pop(f"resolution_evidence_{clear_evidence_for}", None)
     _header("Agency inbox", "Review newly routed complaints, inspect reported locations, and keep request status current.")
+    notification_warning = st.session_state.pop("agency_notice_error", "")
+    if notification_warning:
+        st.warning(notification_warning)
     try:
         complaints = list_complaints()
         notifications = list_notifications()
@@ -961,7 +1067,41 @@ def agency_portal() -> None:
         return
 
     _section_title("Incoming requests", "OPERATIONS QUEUE")
-    ordered = complaints.sort_values("ADDDATE", ascending=False)
+    ordered = complaints.copy()
+    priority_rank = {"High": 0, "Medium": 1, "Low": 2}
+    status_rank = {"Open": 0, "In Progress": 1, "Resolved": 2, "Closed": 3}
+    ordered["_PRIORITY_ORDER"] = ordered["PREDICTED_PRIORITY"].map(priority_rank).fillna(4)
+    ordered["_STATUS_ORDER"] = ordered["STATUS"].map(status_rank).fillna(4)
+    ordered = ordered.sort_values(
+        ["_STATUS_ORDER", "_PRIORITY_ORDER", "ADDDATE"], ascending=[True, True, False]
+    )
+    filter_cols = st.columns(4)
+    queue_priorities = filter_cols[0].multiselect(
+        "Priority filter", sorted(ordered["PREDICTED_PRIORITY"].dropna().astype(str).unique()), key="queue_priority_filter"
+    )
+    queue_statuses = filter_cols[1].multiselect(
+        "Status filter", sorted(ordered["STATUS"].dropna().astype(str).unique()), key="queue_status_filter"
+    )
+    queue_departments = filter_cols[2].multiselect(
+        "Department filter", sorted(ordered["PREDICTED_DEPARTMENT"].dropna().astype(str).unique()), key="queue_department_filter"
+    )
+    request_search = filter_cols[3].text_input("Find request", key="queue_request_search").strip().lower()
+    if queue_priorities:
+        ordered = ordered[ordered["PREDICTED_PRIORITY"].isin(queue_priorities)]
+    if queue_statuses:
+        ordered = ordered[ordered["STATUS"].isin(queue_statuses)]
+    if queue_departments:
+        ordered = ordered[ordered["PREDICTED_DEPARTMENT"].isin(queue_departments)]
+    if request_search:
+        searchable = (
+            ordered["SERVICEREQUESTID"].astype(str)
+            + " " + ordered["SERVICECODEDESCRIPTION"].astype(str)
+            + " " + ordered["LOCATION_ADDRESS"].astype(str)
+        ).str.lower()
+        ordered = ordered[searchable.str.contains(re.escape(request_search), regex=True)]
+    if ordered.empty:
+        _empty_state("No requests match these filters", "Adjust the priority, status, department, or request search.", "⌕")
+        return
     preview_cols = st.columns(2)
     for index, (_, request) in enumerate(ordered.head(4).iterrows()):
         with preview_cols[index % 2]:
@@ -1019,29 +1159,459 @@ def agency_portal() -> None:
             st.link_button("⌖  View location on map", map_url)
 
     _render_problem_photos(complaint, f"agency_{selected_id}")
+    _render_resolution_photos(complaint, f"agency_resolution_{selected_id}")
 
     _section_title("Update case status", "CASE MANAGEMENT")
     statuses = ["Open", "In Progress", "Resolved", "Closed"]
     current_status = complaint["STATUS"] if complaint["STATUS"] in statuses else "Open"
+    inspection_files = st.file_uploader(
+        "Field inspection photos (during)",
+        type=["jpg", "jpeg", "png", "webp"],
+        accept_multiple_files=True,
+        max_upload_size=5,
+        key=f"inspection_evidence_{selected_id}",
+        help="Up to 5 photos, each at most 5 MB.",
+    )
+    resolution_files = st.file_uploader(
+        "Resolution evidence photos (optional)",
+        type=["jpg", "jpeg", "png", "webp"],
+        accept_multiple_files=True,
+        max_upload_size=5,
+        key=f"resolution_evidence_{selected_id}",
+        help="Up to 5 photos, each at most 5 MB. Add evidence when resolving a request.",
+    )
+    inspection_images, _, inspection_errors = _validated_uploads(inspection_files)
+    resolution_images, _, resolution_errors = _validated_uploads(resolution_files)
+    evidence_errors = inspection_errors + resolution_errors
+    for evidence_error in evidence_errors:
+        st.error(evidence_error)
+    if inspection_images:
+        st.image([image for _, image in inspection_images], caption="Inspection evidence preview", width="stretch")
+    if resolution_images:
+        st.image([image for _, image in resolution_images], caption="Resolution evidence preview", width="stretch")
+
     with st.form("agency_status_form"):
         new_status = st.selectbox("Status", statuses, index=statuses.index(current_status))
-        changed = st.form_submit_button("Save status update", type="primary")
+        officer_name = st.text_input(
+            "Assigned field officer",
+            value=complaint.get("ASSIGNED_OFFICER", ""),
+            max_chars=120,
+        )
+        officer_notes = st.text_area(
+            "Inspection / case notes",
+            value=complaint.get("OFFICER_NOTES", ""),
+            max_chars=3000,
+        )
+        resolution_notes = st.text_area(
+            "Resolution notes",
+            value=complaint.get("RESOLUTION_NOTES", ""),
+            max_chars=3000,
+            help="Required with a resolution photo when marking a case Resolved or Closed.",
+        )
+        changed = st.form_submit_button("Save case update", type="primary", disabled=bool(evidence_errors))
     if changed:
+        if resolution_images and new_status not in {"Resolved", "Closed"}:
+            st.error("Resolution photos can be saved only when this request is marked Resolved or Closed.")
+            return
+        if new_status in {"Resolved", "Closed"} and not (resolution_notes.strip() or resolution_images):
+            st.error("Add resolution notes or a resolution photo before resolving this request.")
+            return
         try:
-            updated = update_complaint_status(selected_id, new_status)
+            if resolution_images:
+                event_label = "Resolution Evidence Uploaded"
+            elif inspection_images:
+                event_label = "Field Inspection Evidence Uploaded"
+            elif officer_name.strip() and not complaint.get("ASSIGNED_OFFICER"):
+                event_label = "Officer Assigned"
+            elif new_status == "In Progress" and current_status == "Open":
+                event_label = "Inspection Started"
+            elif new_status in {"Resolved", "Closed"}:
+                event_label = "Resolution Submitted" if new_status == "Resolved" else "Request Closed"
+            else:
+                event_label = f"Status updated to {new_status}"
+            updated = update_complaint_status(
+                selected_id,
+                new_status,
+                event_label=event_label,
+                officer_name=officer_name.strip() or None,
+                officer_notes=officer_notes.strip() or None,
+                resolution_notes=resolution_notes.strip() or None,
+                resolution_image_files=resolution_images,
+                inspection_image_files=inspection_images,
+            )
             if updated is None:
                 st.error("The request was not found; no status was changed.")
             else:
-                st.success(
-                    f"Status updated to {new_status}."
-                    + (f" Closed date: {updated['CLOSED_DATE']}." if new_status == "Closed" else "")
-                )
+                try:
+                    create_agency_notification(
+                        updated,
+                        message=f"{event_label}. {officer_name.strip() if officer_name.strip() else 'Agency'} updated this request.",
+                    )
+                except (OSError, ValueError, RuntimeError) as notification_exc:
+                    st.session_state["agency_notice_error"] = (
+                        f"The case was updated, but its notification could not be saved: {notification_exc}"
+                    )
+                st.session_state["clear_agency_evidence_for"] = selected_id
+                st.success(f"Request {selected_id} updated to {new_status}.")
                 st.rerun()
         except (OSError, ValueError, RuntimeError) as exc:
             st.error(f"Status update failed: {exc}")
 
 
+def live_civic_map(*, public_view: bool = False) -> None:
+    _header(
+        "Live civic map",
+        "Explore approximate request hotspots." if public_view
+        else "Explore the real service requests recorded by this installation.",
+    )
+    try:
+        requests = list_complaints()
+    except (OSError, ValueError, pd.errors.ParserError) as exc:
+        st.error(f"The request map could not be loaded: {exc}")
+        return
+    if requests.empty:
+        _empty_state("No requests to map", "Requests with a selected location will appear here.", "⌖")
+        return
+
+    filter_cols = st.columns(5)
+    priorities = sorted(requests["PREDICTED_PRIORITY"].dropna().astype(str).unique())
+    categories = sorted(requests["SERVICECODEDESCRIPTION"].dropna().astype(str).unique())
+    departments = sorted(requests["PREDICTED_DEPARTMENT"].dropna().astype(str).unique())
+    statuses = sorted(requests["STATUS"].dropna().astype(str).unique())
+    chosen_priorities = filter_cols[0].multiselect("Priority", priorities, key="map_priorities")
+    chosen_categories = filter_cols[1].multiselect("Category", categories, key="map_categories")
+    chosen_departments = filter_cols[2].multiselect("Department", departments, key="map_departments")
+    chosen_statuses = filter_cols[3].multiselect("Status", statuses, key="map_statuses")
+    ward_values = sorted(
+        value for value in requests.get("WARD", pd.Series(dtype=str)).dropna().astype(str).unique()
+        if value.strip()
+    )
+    chosen_wards = filter_cols[4].multiselect("Ward", ward_values, key="map_wards")
+    date_values = _local_dates(requests["ADDDATE"])
+    if date_values.notna().any():
+        first_date = date_values.min()
+        last_date = date_values.max()
+        range_col, _ = st.columns([1.4, 2])
+        selected_range = range_col.date_input(
+            "Submitted between",
+            value=(first_date, last_date),
+            min_value=first_date,
+            max_value=last_date,
+            key="map_date_range",
+        )
+    else:
+        selected_range = None
+
+    filtered = requests.copy()
+    if chosen_priorities:
+        filtered = filtered[filtered["PREDICTED_PRIORITY"].isin(chosen_priorities)]
+    if chosen_categories:
+        filtered = filtered[filtered["SERVICECODEDESCRIPTION"].isin(chosen_categories)]
+    if chosen_departments:
+        filtered = filtered[filtered["PREDICTED_DEPARTMENT"].isin(chosen_departments)]
+    if chosen_statuses:
+        filtered = filtered[filtered["STATUS"].isin(chosen_statuses)]
+    if chosen_wards:
+        filtered = filtered[filtered["WARD"].isin(chosen_wards)]
+    if isinstance(selected_range, (tuple, list)) and len(selected_range) == 2:
+        parsed_dates = _local_dates(filtered["ADDDATE"])
+        lower, upper = selected_range
+        filtered = filtered[parsed_dates.between(lower, upper)]
+
+    points = _coordinates_frame(filtered)
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("Filtered requests", len(filtered))
+    metric_cols[1].metric("Located requests", len(points))
+    metric_cols[2].metric("Without coordinates", len(filtered) - len(points))
+    metric_cols[3].metric("All recorded requests", len(requests))
+    if points.empty:
+        st.warning("No requests in this selection have valid latitude and longitude coordinates.")
+        return
+
+    if public_view:
+        # Citizens see coarse aggregated hotspots; exact locations, IDs, and
+        # request details remain available only to authenticated agency staff.
+        public_points = (
+            points.assign(
+                _lat_cell=points["LATITUDE"].round(1),
+                _lon_cell=points["LONGITUDE"].round(1),
+            )
+            .groupby(["_lat_cell", "_lon_cell"], as_index=False)
+            .size()
+        )
+        center = [float(public_points["_lat_cell"].mean()), float(public_points["_lon_cell"].mean())]
+        map_object = make_civic_map(location=center, zoom_start=7)
+        for _, hotspot in public_points.iterrows():
+            count = int(hotspot["size"])
+            folium.CircleMarker(
+                location=[float(hotspot["_lat_cell"]), float(hotspot["_lon_cell"])],
+                radius=min(17, 7 + count),
+                color="#5eead4",
+                fill=True,
+                fill_color="#0d9488",
+                fill_opacity=0.65,
+                tooltip=f"Approximate hotspot · {count} mapped {'request' if count == 1 else 'requests'}",
+            ).add_to(map_object)
+        st_folium(map_object, width=None, height=620, returned_objects=[], key="public_civic_live_map")
+        st.caption("Public view groups coordinates into approximate 0.1° cells and hides request IDs, addresses, and exact coordinates.")
+        st.dataframe(
+            filtered.groupby(["SERVICECODEDESCRIPTION", "PREDICTED_PRIORITY", "STATUS"], dropna=False)
+            .size().rename("Requests").reset_index()
+            .rename(columns={"SERVICECODEDESCRIPTION": "Service category", "PREDICTED_PRIORITY": "Priority", "STATUS": "Status"}),
+            hide_index=True,
+            width="stretch",
+        )
+        return
+
+    center = [float(points["LATITUDE"].mean()), float(points["LONGITUDE"].mean())]
+    map_object = make_civic_map(location=center, zoom_start=11)
+    priority_colors = {"High": "red", "Medium": "orange", "Low": "green"}
+    for _, request in points.iterrows():
+        request_id = html.escape(str(request["SERVICEREQUESTID"]))
+        title = html.escape(str(request["SERVICECODEDESCRIPTION"]))
+        department = html.escape(str(request["PREDICTED_DEPARTMENT"]))
+        status = html.escape(str(request["STATUS"]))
+        priority = str(request["PREDICTED_PRIORITY"])
+        location = html.escape(
+            ", ".join(str(request.get(key, "")).strip() for key in ("LOCATION_ADDRESS", "CITY") if str(request.get(key, "")).strip())
+        )
+        popup = (
+            f"<strong>{request_id}</strong><br>{title}<br>Priority: {html.escape(priority)}"
+            f"<br>Department: {department}<br>Status: {status}<br>Location: {location or 'Coordinates recorded'}"
+        )
+        marker_color = "gray" if str(request["STATUS"]) in {"Resolved", "Closed"} else priority_colors.get(priority, "blue")
+        folium.CircleMarker(
+            location=[float(request["LATITUDE"]), float(request["LONGITUDE"])],
+            radius=8,
+            color=marker_color,
+            fill=True,
+            fill_opacity=0.82,
+                tooltip=f"{request_id} · {html.escape(priority)} · {status}",
+            popup=folium.Popup(popup, max_width=320),
+        ).add_to(map_object)
+    st_folium(map_object, width=None, height=620, returned_objects=[], key="civic_live_map")
+    st.caption("Marker colors show priority; status is also written in each marker's tooltip and details.")
+    st.dataframe(
+        points[["SERVICEREQUESTID", "SERVICECODEDESCRIPTION", "PREDICTED_PRIORITY", "PREDICTED_DEPARTMENT", "STATUS", "LATITUDE", "LONGITUDE"]],
+        hide_index=True,
+        width="stretch",
+    )
+
+
+def notification_center() -> None:
+    _header("Notification center", "Agency notices generated by request submissions and operations updates.")
+    refresh_col, summary_col = st.columns([1, 4])
+    if refresh_col.button("Refresh notifications", width="stretch"):
+        st.rerun()
+    st.caption("Notices are read from local request storage when this page loads.")
+    try:
+        notifications = list_notifications()
+    except (OSError, ValueError, pd.errors.ParserError) as exc:
+        st.error(f"Notifications could not be loaded: {exc}")
+        return
+    unread = notifications[notifications["NOTIFICATION_STATUS"].fillna("") != "Read"]
+    summary_col.metric("Unread notices", len(unread))
+    if notifications.empty:
+        _empty_state("No notifications yet", "New routed-request notices will be listed here.", "♧")
+        return
+    ordered = notifications.sort_values("NOTIFICATION_TIME", ascending=False, kind="stable")
+    for _, notice in ordered.iterrows():
+        notice_id = str(notice.get("NOTIFICATION_ID", ""))
+        request_id = str(notice.get("SERVICEREQUESTID", ""))
+        is_unread = str(notice.get("NOTIFICATION_STATUS", "")) != "Read"
+        notice_col, action_col = st.columns([5, 1])
+        notice_col.markdown(
+            f'<div class="case-card"><div class="case-id">{html.escape(request_id)}'
+            f' &nbsp;·&nbsp; {"NEW" if is_unread else "READ"}</div>'
+            f'<div class="case-title">{html.escape(str(notice.get("SERVICE_DESCRIPTION", "Service request")))}</div>'
+            f'<div class="case-meta">{html.escape(str(notice.get("MESSAGE", "")))}<br>'
+            f'{html.escape(str(notice.get("AGENCY", "Unassigned")))} · '
+            f'{html.escape(str(notice.get("PRIORITY", "")))} priority · '
+            f'{html.escape(str(notice.get("NOTIFICATION_TIME", "")))}</div></div>',
+            unsafe_allow_html=True,
+        )
+        if is_unread and action_col.button("Mark read", key=f"notice_read_{notice_id}"):
+            if mark_notification_read(notice_id):
+                st.rerun()
+            st.error("That notification no longer exists.")
+
+
+def department_intelligence() -> None:
+    _header("Department intelligence", "Workload summaries based on saved department routes and current request records.")
+    try:
+        complaints = list_complaints()
+        departments = sorted(set(load_routing_map().values()))
+    except (OSError, ValueError, RuntimeError, pd.errors.ParserError) as exc:
+        st.error(f"Department information could not be loaded: {exc}")
+        return
+    if not departments:
+        _empty_state("No routed departments", "The saved service routing map has no department entries.", "▤")
+        return
+    summaries: list[dict[str, Any]] = []
+    for department in departments:
+        rows = complaints[complaints["PREDICTED_DEPARTMENT"] == department] if not complaints.empty else complaints
+        assigned = rows.get("ASSIGNED_OFFICER", pd.Series(dtype=str)).astype(str).str.strip().ne("")
+        status = rows.get("STATUS", pd.Series(dtype=str))
+        high_active = (rows.get("PREDICTED_PRIORITY", pd.Series(dtype=str)) == "High") & status.isin(["Open", "In Progress"])
+        summaries.append({
+            "Department": department,
+            "Incoming": int((status == "Open").sum()),
+            "Assigned": int(assigned.sum()),
+            "In progress": int((status == "In Progress").sum()),
+            "Resolved": int(status.isin(["Resolved", "Closed"]).sum()),
+            "High priority active": int(high_active.sum()),
+            "SLA risk": "Not configured",
+        })
+    summary_frame = pd.DataFrame(summaries)
+    _section_title("Department workload", "CURRENT REQUESTS")
+    st.dataframe(summary_frame, hide_index=True, width="stretch")
+    selected_department = st.selectbox("Department detail", departments, key="department_detail")
+    row = summary_frame[summary_frame["Department"] == selected_department].iloc[0]
+    _section_title(selected_department, "ROUTING MAP DEPARTMENT")
+    metric_cols = st.columns(5)
+    for col, label in zip(metric_cols, ["Incoming", "Assigned", "In progress", "Resolved", "High priority active"]):
+        col.metric(label, int(row[label]))
+    st.info("SLA risk is not available: this installation has no configured service-level targets or working-hours calendar.")
+
+
+def ward_intelligence() -> None:
+    _header("Ward intelligence", "Understand request volume in the wards citizens have entered in their reports.")
+    try:
+        complaints = list_complaints()
+    except (OSError, ValueError, pd.errors.ParserError) as exc:
+        st.error(f"Ward request data could not be loaded: {exc}")
+        return
+    if complaints.empty or "WARD" not in complaints:
+        _empty_state("No ward data available", "Ward information is optional and will appear after it is provided in a citizen report.", "⌖")
+        return
+    ward_rows = complaints[complaints["WARD"].fillna("").astype(str).str.strip() != ""]
+    if ward_rows.empty:
+        _empty_state(
+            "No ward data available",
+            "No ward names or numbers have been entered yet. CivicPulse does not infer ward boundaries from an address.",
+            "⌖",
+        )
+        return
+    summary = ward_rows.groupby("WARD", dropna=True).agg(
+        Requests=("SERVICEREQUESTID", "count"),
+        High_priority=("PREDICTED_PRIORITY", lambda values: int((values == "High").sum())),
+        Open=("STATUS", lambda values: int((values == "Open").sum())),
+        In_progress=("STATUS", lambda values: int((values == "In Progress").sum())),
+        Resolved=("STATUS", lambda values: int(values.isin(["Resolved", "Closed"]).sum())),
+    ).reset_index().sort_values("Requests", ascending=False)
+    summary = summary.rename(columns={
+        "WARD": "Ward", "High_priority": "High priority", "In_progress": "In progress"
+    })
+    st.dataframe(summary, hide_index=True, width="stretch")
+    selected_ward = st.selectbox("Focus ward", summary["Ward"].tolist(), key="ward_detail")
+    selected_rows = ward_rows[ward_rows["WARD"] == selected_ward]
+    metric_cols = st.columns(5)
+    for col, label in zip(metric_cols, ["Requests", "High priority", "Open", "In progress", "Resolved"]):
+        col.metric(label, int(summary.loc[summary["Ward"] == selected_ward, label].iloc[0]))
+    points = _coordinates_frame(selected_rows)
+    if points.empty:
+        st.caption("No valid coordinates are recorded for this ward yet.")
+    else:
+        map_object = make_civic_map(
+            location=[float(points["LATITUDE"].mean()), float(points["LONGITUDE"].mean())],
+            zoom_start=12,
+        )
+        for _, request in points.iterrows():
+            folium.Marker(
+                [float(request["LATITUDE"]), float(request["LONGITUDE"])],
+                tooltip=f"{request['SERVICEREQUESTID']} · {request['PREDICTED_PRIORITY']}",
+            ).add_to(map_object)
+        st_folium(map_object, width=None, height=460, returned_objects=[], key="ward_requests_map")
+    st.dataframe(
+        selected_rows[["SERVICEREQUESTID", "SERVICECODEDESCRIPTION", "PREDICTED_PRIORITY", "STATUS", "ADDDATE"]],
+        hide_index=True,
+        width="stretch",
+    )
+
+
+def _command_center(complaints: pd.DataFrame) -> None:
+    statuses = complaints["STATUS"] if not complaints.empty else pd.Series(dtype=str)
+    today = datetime.now(APP_TIMEZONE).date()
+    closed_dates = _local_dates(complaints.get("CLOSED_DATE", pd.Series(dtype=str)))
+    resolved_today = int((closed_dates.dt.date == today).sum()) if not complaints.empty else 0
+    high_open = int(((complaints["PREDICTED_PRIORITY"] == "High") & (statuses.isin(["Open", "In Progress"]))).sum()) if not complaints.empty else 0
+    active = int(statuses.isin(["Open", "In Progress"]).sum())
+    assigned = int(complaints.get("PREDICTED_DEPARTMENT", pd.Series(dtype=str)).astype(str).str.strip().ne("").sum()) if not complaints.empty else 0
+    metric_cols = st.columns(5)
+    for col, label, value in zip(
+        metric_cols,
+        ["Active requests", "High priority active", "Awaiting routing", "Resolved today", "Total local requests"],
+        [active, high_open, len(complaints) - assigned, resolved_today, len(complaints)],
+    ):
+        col.metric(label, f"{value:,}")
+    st.info("SLA risk is unavailable because no service-level targets are configured for this installation.")
+
+    _section_title("Civic incident map", "RECORDED COORDINATES")
+    points = _coordinates_frame(complaints)
+    if points.empty:
+        _empty_state("No mapped requests yet", "Add a location pin when reporting an issue to show it on the command map.", "⌖")
+    else:
+        center = [float(points["LATITUDE"].mean()), float(points["LONGITUDE"].mean())]
+        map_object = make_civic_map(location=center, zoom_start=11)
+        priority_colors = {"High": "red", "Medium": "orange", "Low": "green"}
+        for _, request in points.iterrows():
+            request_id = html.escape(str(request["SERVICEREQUESTID"]))
+            description = html.escape(str(request["SERVICECODEDESCRIPTION"]))
+            priority = str(request["PREDICTED_PRIORITY"])
+            raw_status = str(request["STATUS"])
+            status = html.escape(raw_status)
+            department = html.escape(str(request.get("PREDICTED_DEPARTMENT", "")))
+            location = html.escape(
+                ", ".join(str(request.get(key, "")).strip() for key in ("LOCATION_ADDRESS", "CITY") if str(request.get(key, "")).strip())
+            )
+            folium.CircleMarker(
+                location=[float(request["LATITUDE"]), float(request["LONGITUDE"])],
+                radius=9,
+                color="gray" if raw_status in {"Resolved", "Closed"} else priority_colors.get(priority, "blue"),
+                fill=True,
+                fill_opacity=0.85,
+                tooltip=f"{request_id} · {html.escape(priority)} · {status}",
+                popup=folium.Popup(
+                    f"<strong>{request_id}</strong><br>{description}<br>{html.escape(priority)} · {status}"
+                    f"<br>{department}<br>{location or 'Coordinates recorded'}"
+                ),
+            ).add_to(map_object)
+        st_folium(map_object, width=None, height=680, returned_objects=[], key="presentation_civic_map")
+
+    _section_title("Latest request activity", "FROM SAVED STATUS HISTORY")
+    activity: list[dict[str, str]] = []
+    for _, request in complaints.iterrows():
+        for event in _parse_status_history(request.get("STATUS_HISTORY", "")):
+            if not isinstance(event, dict):
+                continue
+            activity.append({
+                "Request": str(request.get("SERVICEREQUESTID", "")),
+                "Event": str(event.get("event", "Update")),
+                "Time": str(event.get("timestamp", "")),
+                "Category": str(request.get("SERVICECODEDESCRIPTION", "")),
+                "Priority": str(request.get("PREDICTED_PRIORITY", "")),
+            })
+    if activity:
+        activity_frame = pd.DataFrame(activity)
+        activity_frame["_sort"] = pd.to_datetime(activity_frame["Time"], errors="coerce", utc=True)
+        st.dataframe(
+            activity_frame.sort_values("_sort", ascending=False).drop(columns="_sort").head(12),
+            hide_index=True,
+            width="stretch",
+        )
+    else:
+        _empty_state("No activity yet", "Request submissions and status updates will appear here.", "◷")
+
+
 def admin_dashboard() -> None:
+    presentation = st.toggle("Command Center presentation mode", key="command_center_mode")
+    if presentation:
+        _header("CivicPulse Command Center", "Live operational view built from this installation's saved requests.")
+        try:
+            _command_center(list_complaints())
+        except (OSError, ValueError, KeyError, pd.errors.ParserError) as exc:
+            st.error(f"The command center could not be loaded: {exc}")
+        return
     _header("Operations dashboard", "Prepared historical summaries combined with locally submitted demo requests.")
     try:
         historical_departments = _read_summary(DEPARTMENT_HISTORY_PATH)
@@ -1072,6 +1642,101 @@ def admin_dashboard() -> None:
         f"Historical total from prepared department summaries: {historic_total:,}. "
         "Status counts represent locally tracked live requests."
     )
+
+    _section_title("Local operations", "FILTER SAVED REQUESTS")
+    period_col, period_help_col = st.columns([1, 3])
+    period = period_col.selectbox(
+        "Reporting window",
+        ["All time", "Today", "7 days", "30 days", "90 days", "Custom"],
+        key="analytics_period",
+    )
+    local_live = live.copy()
+    if not local_live.empty:
+        local_live["_LOCAL_DATE"] = _local_dates(local_live["ADDDATE"])
+        valid_dates = local_live["_LOCAL_DATE"].dropna()
+        today = datetime.now(APP_TIMEZONE).date()
+        if period == "Today":
+            local_live = local_live[local_live["_LOCAL_DATE"] == today]
+        elif period in {"7 days", "30 days", "90 days"}:
+            window_days = int(period.split()[0])
+            local_live = local_live[local_live["_LOCAL_DATE"] >= today - pd.Timedelta(days=window_days - 1)]
+        elif period == "Custom" and not valid_dates.empty:
+            date_range = st.date_input(
+                "Custom date range",
+                value=(valid_dates.min(), valid_dates.max()),
+                min_value=valid_dates.min(),
+                max_value=valid_dates.max(),
+                key="analytics_custom_range",
+            )
+            if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
+                local_live = local_live[local_live["_LOCAL_DATE"].between(date_range[0], date_range[1])]
+        period_help_col.caption("This section uses saved request records. Prepared historical summaries below are separate reference data.")
+    if local_live.empty:
+        _empty_state("No requests in this window", "Try a wider date range or record a new service request.", "◷")
+    else:
+        local_status = local_live["STATUS"]
+        completed_count = int(local_status.isin(["Resolved", "Closed"]).sum())
+        submitted_times = pd.to_datetime(local_live["ADDDATE"], errors="coerce", utc=True)
+        resolved_times = pd.to_datetime(local_live["CLOSED_DATE"], errors="coerce", utc=True)
+        resolution_hours = (resolved_times - submitted_times).dt.total_seconds() / 3600
+        valid_resolution_hours = resolution_hours[resolution_hours.ge(0)].dropna()
+        average_resolution = f"{valid_resolution_hours.mean():.1f} h" if not valid_resolution_hours.empty else "—"
+        local_metrics = st.columns(5)
+        for col, label, value in zip(
+            local_metrics,
+            ["Requests", "Open", "High priority", "In progress", "Resolution rate"],
+            [len(local_live), int((local_status == "Open").sum()),
+             int((local_live["PREDICTED_PRIORITY"] == "High").sum()),
+             int((local_status == "In Progress").sum()),
+             f"{completed_count / len(local_live):.1%}" if len(local_live) else "—"],
+        ):
+            col.metric(label, value if isinstance(value, str) else f"{value:,}")
+        st.metric("Average recorded resolution time", average_resolution)
+        if valid_resolution_hours.empty:
+            st.caption("This window has no completed requests with valid submission and completion timestamps.")
+        trend = local_live.groupby("_LOCAL_DATE").size().rename("Requests").reset_index()
+        category_counts = local_live.groupby("SERVICECODEDESCRIPTION").size().rename("Requests").reset_index()
+        priority_counts = local_live.groupby("PREDICTED_PRIORITY").size().rename("Requests").reset_index()
+        department_counts = local_live.groupby("PREDICTED_DEPARTMENT").size().rename("Requests").reset_index()
+        chart_left, chart_right = st.columns(2)
+        with chart_left:
+            _render_chart(
+                px.line(trend, x="_LOCAL_DATE", y="Requests", markers=True, title="Saved requests over time")
+                .update_traces(line_color="#76b8ff", marker_color="#61e7e0", line_width=3)
+            )
+        with chart_right:
+            _render_chart(
+                px.bar(category_counts.sort_values("Requests", ascending=False).head(12),
+                       x="Requests", y="SERVICECODEDESCRIPTION", orientation="h",
+                       title="Saved requests by service category", color="Requests",
+                       color_continuous_scale=["#18324a", "#76b8ff"])
+            )
+        chart_left, chart_right = st.columns(2)
+        with chart_left:
+            _render_chart(
+                px.pie(
+                    priority_counts,
+                    names="PREDICTED_PRIORITY",
+                    values="Requests",
+                    title="Saved requests by model priority",
+                    hole=0.45,
+                    color="PREDICTED_PRIORITY",
+                    color_discrete_map={"Low": "#61d6a0", "Medium": "#ffc56c", "High": "#ff718d"},
+                )
+            )
+        with chart_right:
+            _render_chart(
+                px.bar(department_counts.sort_values("Requests", ascending=False),
+                       x="Requests", y="PREDICTED_DEPARTMENT", orientation="h",
+                       title="Saved requests by department", color="Requests",
+                       color_continuous_scale=["#18324a", "#76b8ff"])
+            )
+        if local_live.get("WARD", pd.Series(dtype=str)).fillna("").astype(str).str.strip().ne("").any():
+            ward_summary = local_live[local_live["WARD"].fillna("").astype(str).str.strip() != ""]
+            ward_summary = ward_summary.groupby("WARD").size().rename("Requests").reset_index()
+            _render_chart(px.bar(ward_summary, x="WARD", y="Requests", title="Requests by reported ward"))
+        else:
+            st.caption("Ward breakdown will appear when reporters provide a ward or service-zone value.")
 
     department_data = historical_departments.copy()
     priority_data = historical_priorities.copy()
@@ -1255,7 +1920,221 @@ def model_information(project_config: dict) -> None:
         st.caption(f"Prepared reference files are loaded from: {APP_DATA_DIR}")
 
 
+def _auth_configuration() -> tuple[bool, set[str], set[str]]:
+    """Read optional Streamlit OIDC configuration and trusted role allowlists."""
+    try:
+        auth = dict(st.secrets.get("auth", {}))
+        roles = dict(st.secrets.get("roles", {}))
+    except (FileNotFoundError, KeyError, TypeError, AttributeError):
+        return False, set(), set()
+    required_auth_values = ("redirect_uri", "cookie_secret", "client_id", "client_secret", "server_metadata_url")
+    enabled = all(auth.get(key) and not str(auth.get(key)).startswith("replace-") for key in required_auth_values)
+    admins = {str(email).strip().lower() for email in roles.get("administrators", []) if str(email).strip()}
+    officers = {str(email).strip().lower() for email in roles.get("officers", []) if str(email).strip()}
+    return enabled, admins, officers
+
+
+def _current_user_role(auth_enabled: bool, admins: set[str], officers: set[str]) -> tuple[str, str]:
+    if not auth_enabled:
+        return "anonymous", ""
+    try:
+        if not st.user.is_logged_in:
+            return "anonymous", ""
+        email = str(st.user.get("email", "")).strip().lower()
+        display_name = str(st.user.get("name", "")).strip() or email
+        verified_claim = st.user.get("email_verified", False)
+        email_verified = verified_claim is True or str(verified_claim).strip().casefold() == "true"
+    except (AttributeError, KeyError, TypeError):
+        return "anonymous", ""
+    if email_verified and email in admins:
+        return "administrator", display_name
+    if email_verified and email in officers:
+        return "officer", display_name
+    return "citizen", display_name
+
+
+def _begin_credential_session(user: dict[str, Any]) -> None:
+    """Keep only the account ID in Streamlit session state; reload role from DB."""
+    st.session_state["credential_user_id"] = str(user["user_id"])
+    st.session_state["auth_source"] = "credentials"
+    st.session_state["auth_expires_at"] = datetime.now().timestamp() + 8 * 60 * 60
+
+
+def _render_authentication_screen(oidc_enabled: bool) -> None:
+    try:
+        has_accounts = has_registered_users()
+    except (OSError, sqlite3.Error) as exc:
+        st.error(f"The local account store could not be opened: {exc}")
+        return
+    st.markdown(
+        '<div class="portal-banner auth-card"><div class="eyebrow">CIVICPULSE · SECURE ACCESS</div>'
+        '<h1>Welcome to CivicPulse</h1>'
+        '<p>Create a citizen account to report and follow service requests, or sign in to continue.</p></div>',
+        unsafe_allow_html=True,
+    )
+    left, form_column, right = st.columns([1, 1.25, 1])
+    with form_column:
+        with st.container(border=True):
+            st.markdown('<div class="section-kicker">YOUR ACCOUNT</div>', unsafe_allow_html=True)
+            mode = st.radio(
+                "Account access",
+                ["Sign in", "Register"],
+                horizontal=True,
+                index=0 if has_accounts else 1,
+                key="auth_mode_existing" if has_accounts else "auth_mode_first_run",
+                label_visibility="collapsed",
+            )
+            if mode == "Register":
+                with st.form("citizen_registration_form", clear_on_submit=False):
+                    display_name = st.text_input("Full name", max_chars=80, autocomplete="name")
+                    email = st.text_input("Email address", max_chars=254, autocomplete="email")
+                    password = st.text_input("Create password", type="password", max_chars=1024, autocomplete="new-password")
+                    confirm_password = st.text_input("Confirm password", type="password", max_chars=1024, autocomplete="new-password")
+                    st.caption("Use at least 12 characters. New self-registered accounts receive citizen access.")
+                    submitted = st.form_submit_button("Create account", type="primary", width="stretch")
+                if submitted:
+                    if password != confirm_password:
+                        st.error("The two passwords do not match.")
+                    else:
+                        try:
+                            new_user = register_citizen(email, display_name, password)
+                        except ValueError as exc:
+                            st.error(str(exc))
+                        except (OSError, RuntimeError, sqlite3.Error) as exc:
+                            st.error(f"The account could not be created: {exc}")
+                        else:
+                            _begin_credential_session(new_user)
+                            st.rerun()
+            else:
+                with st.form("citizen_login_form", clear_on_submit=False):
+                    email = st.text_input("Email address", max_chars=254, autocomplete="email")
+                    password = st.text_input("Password", type="password", max_chars=1024, autocomplete="current-password")
+                    submitted = st.form_submit_button("Sign in", type="primary", width="stretch")
+                if submitted:
+                    try:
+                        client_ip = str(st.context.ip_address or "unknown")
+                    except Exception:
+                        client_ip = "unknown"
+                    try:
+                        user, error_message = authenticate_user(email, password, client_ip=client_ip)
+                    except (OSError, RuntimeError, sqlite3.Error) as exc:
+                        st.error(f"Sign-in is temporarily unavailable: {exc}")
+                    else:
+                        if user:
+                            _begin_credential_session(user)
+                            st.rerun()
+                        st.error(error_message)
+                st.caption("Forgot your password? Contact your CivicPulse administrator; email reset is not configured.")
+
+            st.markdown(
+                '<div class="helper-panel">For account safety, public registration never grants agency access. '
+                'Officers and administrators are provisioned separately.</div>',
+                unsafe_allow_html=True,
+            )
+            if oidc_enabled:
+                st.divider()
+                configured_provider = str(st.secrets.get("auth", {}).get("server_metadata_url", ""))
+                provider_label = "Continue with Google" if "accounts.google.com" in configured_provider else "Continue with your organization"
+                st.button(provider_label, type="secondary", on_click=st.login, key="oidc_continue", width="stretch")
+
+
+def _local_demo_override_enabled() -> bool:
+    """Enable the unauthenticated demo only through an explicit local opt-in."""
+    return os.environ.get("CIVICPULSE_DEMO_MODE", "").strip().casefold() in {"1", "true", "yes"}
+
+
+def help_center() -> None:
+    _header("CivicPulse help", "Quick guidance for submitting, following, and understanding a service request.")
+    help_columns = st.columns(3)
+    help_cards = [
+        ("01", "Report clearly", "Choose the closest service category, describe what happened, and attach a photo only when it helps explain the issue."),
+        ("02", "Add a location", "Confirm the report location on the map. A precise location helps the responsible team find the issue."),
+        ("03", "Follow progress", "Keep the request ID shown after submission. Use it on Track a request to review status updates."),
+    ]
+    for column, (number, title, description) in zip(help_columns, help_cards):
+        with column:
+            st.markdown(
+                f'<section class="help-card"><span class="help-number">{number}</span>'
+                f'<h3>{html.escape(title)}</h3><p>{html.escape(description)}</p></section>',
+                unsafe_allow_html=True,
+            )
+    st.caption("Priority estimates and routing suggestions support agency triage; staff review and manage requests.")
+    report_col, track_col = st.columns(2)
+    with report_col:
+        if st.button("Report an issue", type="primary", key="help_report"):
+            _go_to_page("Report Complaint")
+            st.rerun()
+    with track_col:
+        if st.button("Track a request", key="help_track"):
+            _go_to_page("Track Complaint")
+            st.rerun()
+
+
+def system_health(auth_enabled: bool) -> None:
+    _header("System health", "A transparent view of the services and integrations this installation actually uses.")
+    checks: list[tuple[str, bool | None, str]] = []
+    try:
+        complaints = list_complaints()
+        notifications = list_notifications()
+        checks.append(("Local request store", True, f"CSV storage readable · {len(complaints):,} requests"))
+        checks.append(("Local notification store", True, f"CSV storage readable · {len(notifications):,} notices"))
+    except (OSError, ValueError, pd.errors.ParserError) as exc:
+        checks.append(("Local data storage", False, str(exc)))
+    upload_writable = os.access(UPLOADS_DIR if UPLOADS_DIR.is_dir() else APP_DATA_DIR, os.W_OK)
+    checks.append(("Evidence storage", upload_writable, "Upload directory is writable" if upload_writable else "Upload directory is not writable"))
+    model_files = (PRIORITY_MODEL_PATH, PROJECT_CONFIG_PATH, FEATURE_MEDIANS_PATH)
+    model_ready = all(path.is_file() for path in model_files)
+    checks.append(("Priority model assets", model_ready, "CatBoost artifacts " + ("are present" if model_ready else "are incomplete")))
+    checks.append(("Vision analysis", None, "Demo Vision Analysis: metadata only; no computer-vision model configured"))
+    checks.append(("Real-time events", None, "Not configured; views refresh when the app reruns"))
+    checks.append(("Standalone API", None, "Not configured; the Streamlit app calls local services directly"))
+    auth_store_writable = os.access(APP_DATA_DIR if APP_DATA_DIR.exists() else APP_DATA_DIR.parent, os.W_OK)
+    auth_detail = "Local credential accounts available"
+    if auth_enabled:
+        auth_detail += " · OIDC sign-in and allowlists also configured"
+    checks.append(("Authentication", auth_store_writable, auth_detail if auth_store_writable else "Account database directory is not writable"))
+    for label, healthy, detail in checks:
+        if healthy is True:
+            st.success(f"{label} — available · {detail}")
+        elif healthy is False:
+            st.error(f"{label} — unavailable · {detail}")
+        else:
+            st.info(f"{label} — {detail}")
+
+
 def main() -> None:
+    auth_enabled, administrators, officers = _auth_configuration()
+    oidc_role, oidc_name = _current_user_role(auth_enabled, administrators, officers) if auth_enabled else ("anonymous", "")
+    auth_source = "oidc" if oidc_role != "anonymous" else ""
+    role, display_name = oidc_role, oidc_name
+
+    if role == "anonymous":
+        credential_user_id = st.session_state.get("credential_user_id")
+        session_expiry = float(st.session_state.get("auth_expires_at", 0) or 0)
+        if credential_user_id and datetime.now().timestamp() < session_expiry:
+            try:
+                credential_user = get_user_by_id(str(credential_user_id))
+            except (OSError, sqlite3.Error) as exc:
+                st.error(f"The local account store could not be read: {exc}")
+                st.stop()
+            if credential_user:
+                role = str(credential_user["role"])
+                display_name = str(credential_user["display_name"])
+                auth_source = "credentials"
+            else:
+                st.session_state.pop("credential_user_id", None)
+                st.session_state.pop("auth_expires_at", None)
+                st.session_state.pop("auth_source", None)
+        else:
+            st.session_state.pop("credential_user_id", None)
+            st.session_state.pop("auth_expires_at", None)
+
+    if role == "anonymous" and _local_demo_override_enabled():
+        role, display_name, auth_source = "demo", "Local demo", "demo"
+    if role == "anonymous":
+        _render_authentication_screen(auth_enabled)
+        st.stop()
+
     try:
         services = load_service_lookup()
         _, project_config, _ = load_predictor_assets()
@@ -1267,13 +2146,46 @@ def main() -> None:
         "Citizen Dashboard": "⌂  Dashboard",
         "Report Complaint": "＋  Report a complaint",
         "Track Complaint": "◷  Track a request",
+        "Help Center": "ⓘ  Help center",
+        "Live Map": "⌖  Live map",
+        "Notifications": "♧  Notifications",
+        "System Health": "◉  System health",
+        "Ward Intelligence": "⌖  Ward intelligence",
+        "Department Intelligence": "▤  Departments",
         "Agency Portal": "▤  Agency inbox",
         "Admin Dashboard": "▥  Analytics",
         "Model Information": "ⓘ  Model insights",
     }
+    if auth_source == "oidc":
+        st.session_state.pop("credential_user_id", None)
+        st.session_state.pop("auth_expires_at", None)
+    st.session_state["auth_source"] = auth_source
+    st.session_state["authenticated"] = role not in {"anonymous", "demo"}
+    st.session_state["user_role"] = role
+
+    if role == "citizen":
+        allowed_pages = {"Citizen Dashboard", "Report Complaint", "Track Complaint", "Help Center", "Live Map"}
+    elif role == "officer":
+        allowed_pages = {
+            "Citizen Dashboard", "Report Complaint", "Track Complaint", "Live Map",
+            "Notifications", "System Health", "Ward Intelligence", "Department Intelligence",
+            "Agency Portal", "Admin Dashboard", "Model Information", "Help Center",
+        }
+    else:
+        allowed_pages = set(page_labels)
+    page_labels = {page: label for page, label in page_labels.items() if page in allowed_pages}
     label_pages = {label: page for page, label in page_labels.items()}
     current_page = st.session_state.get("portal_page", "Citizen Dashboard")
     navigation_target = st.session_state.pop("navigation_target", None)
+    try:
+        requested_action = str(st.query_params.get("nav", "")).strip().casefold()
+        if requested_action:
+            st.query_params.pop("nav", None)
+            query_target = floating_action_target(requested_action, role)
+            if query_target in allowed_pages:
+                navigation_target = query_target
+    except (AttributeError, KeyError, TypeError, ValueError):
+        pass
     if navigation_target in page_labels:
         st.session_state["navigation_choice"] = page_labels[navigation_target]
     elif st.session_state.get("navigation_choice") not in label_pages:
@@ -1293,17 +2205,39 @@ def main() -> None:
     with brand_col:
         st.markdown(
             '<div class="app-brand"><div class="brand-seal">🏛</div><div>'
-            '<div class="brand-name">Government Service Request System</div>'
-            '<div class="brand-subtitle">CITIZEN SERVICES &nbsp;·&nbsp; LOCAL DEMO PORTAL</div>'
+            '<div class="brand-name">CivicPulse</div>'
+            '<div class="brand-subtitle">TURNING CIVIC SIGNALS INTO ACTION</div>'
             '</div></div>',
             unsafe_allow_html=True,
         )
     with utility_col:
+        role_labels = {
+            "demo": "LOCAL DEMO",
+            "citizen": "CITIZEN",
+            "officer": "AGENCY OFFICER",
+            "administrator": "AGENCY ADMIN",
+        }
+        role_label = role_labels.get(role, "PUBLIC")
+        status_label = "DEMO WORKSPACE" if role == "demo" else ("OIDC SESSION VERIFIED" if auth_source == "oidc" else "SIGNED IN")
+        avatar = html.escape((display_name or "P")[:1].upper())
         st.markdown(
-            f'<div class="brand-utility"><span class="live-dot">●</span> &nbsp;LOCAL DEMO PORTAL'
-            f'<br><strong>Public access</strong> &nbsp;·&nbsp; 🔔 {new_count} new agency notices</div>',
+            f'<div class="brand-utility"><span class="utility-pill">'
+            f'<span class="live-dot">●</span>&nbsp;{status_label}</span><br>'
+            f'<span class="avatar-chip">{avatar}</span> '
+            f'<strong>{html.escape(display_name or "Public access")}</strong> '
+            f'<span class="role-pill">{role_label}</span><br>'
+            f'♧ &nbsp;{new_count} new agency notices</div>',
             unsafe_allow_html=True,
         )
+        if auth_source in {"oidc", "credentials"} and st.button("Sign out", key="sign_out", width="stretch"):
+            st.session_state.pop("credential_user_id", None)
+            st.session_state.pop("auth_expires_at", None)
+            st.session_state.pop("auth_source", None)
+            st.session_state.pop("authenticated", None)
+            st.session_state.pop("user_role", None)
+            if auth_source == "oidc":
+                st.logout()
+            st.rerun()
     st.markdown('<div class="top-rule"></div>', unsafe_allow_html=True)
     page_label = st.radio(
         "Main navigation",
@@ -1316,14 +2250,27 @@ def main() -> None:
     )
     page = label_pages[page_label]
     st.session_state["portal_page"] = page
+    st.markdown(floating_action_markup(role, new_count), unsafe_allow_html=True)
 
     try:
         if page == "Citizen Dashboard":
-            citizen_dashboard()
+            citizen_dashboard(services)
         elif page == "Report Complaint":
             report_complaint(services)
         elif page == "Track Complaint":
             show_tracking(st.session_state.get("tracking_id", ""))
+        elif page == "Help Center":
+            help_center()
+        elif page == "Live Map":
+            live_civic_map(public_view=(role == "citizen"))
+        elif page == "Notifications":
+            notification_center()
+        elif page == "System Health":
+            system_health(auth_enabled)
+        elif page == "Ward Intelligence":
+            ward_intelligence()
+        elif page == "Department Intelligence":
+            department_intelligence()
         elif page == "Agency Portal":
             agency_portal()
         elif page == "Admin Dashboard":

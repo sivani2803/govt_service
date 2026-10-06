@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+.env.*.local
+.streamlit/secrets.toml
+government_service_request_app/civicpulse_accounts.sqlite3
+government_service_request_app/civicpulse_accounts.sqlite3-journal
+government_service_request_app/civicpulse_accounts.sqlite3-wal
+government_service_request_app/civicpulse_accounts.sqlite3-shm
+government_service_request_app/category_image_cache.json
+government_service_request_app/category_image_cache.json.lock
+government_service_request_app/category_image_cache.json.tmp

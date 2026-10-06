@@ -3,15 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <style>
-      body { margin: 0; color: #27445f; font: 14px Arial, sans-serif; }
-      button { border: 0; border-radius: 7px; background: #1769aa; color: white;
-        cursor: pointer; font-weight: 600; padding: 10px 15px; }
+      body { margin: 0; color: #c8dfda; font: 13px "Segoe UI", Arial, sans-serif; }
+      button { border: 1px solid #14b8a6; border-radius: 10px; background: linear-gradient(110deg,#0f766e,#0d9488); color: white;
+        cursor: pointer; font-weight: 650; padding: 11px 15px; transition: transform .16s, box-shadow .16s; }
+      button:hover { transform: translateY(-1px); box-shadow: 0 5px 16px rgba(13,148,136,.25); }
       button:disabled { cursor: wait; opacity: .7; }
-      #message { margin-left: 10px; color: #526c84; }
+      #message { margin-left: 10px; color: #9aadaa; }
     </style>
   </head>
   <body>
-    <button id="locate" type="button">Use my current location</button>
+      <button id="locate" type="button">⌖ &nbsp;Use current location</button>
     <span id="message">Your browser will ask for permission.</span>
     <script>
       const button = document.getElementById("locate");

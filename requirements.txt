@@ -1,7 +1,8 @@
-streamlit
-pandas
-numpy
-catboost
-plotly
-requests
-streamlit-folium
+streamlit==1.54.0
+pandas==2.3.3
+numpy==2.4.2
+catboost==1.2.10
+plotly==7.1.0
+folium==0.20.0
+streamlit-folium==0.27.4
+Pillow==12.1.1

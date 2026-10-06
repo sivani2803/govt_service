@@ -6,6 +6,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 MODEL_DIR = ROOT_DIR / "government_service_request_model"
 APP_DATA_DIR = ROOT_DIR / "government_service_request_app"
 UPLOADS_DIR = APP_DATA_DIR / "uploads"
+AUTH_DATABASE_PATH = APP_DATA_DIR / "civicpulse_accounts.sqlite3"
 
 PRIORITY_MODEL_PATH = MODEL_DIR / "priority_catboost_model.cbm"
 PROJECT_CONFIG_PATH = MODEL_DIR / "project_config.pkl"
@@ -44,7 +45,18 @@ LIVE_COMPLAINT_COLUMNS = [
     "CITY",
     "STATE",
     "IMAGE_PATHS",
+    "IMAGE_ANNOTATIONS",
     "STATUS_HISTORY",
+    "ASSIGNED_OFFICER",
+    "OFFICER_NOTES",
+    "INSPECTION_IMAGE_PATHS",
+    "RESOLUTION_IMAGE_PATHS",
+    "RESOLUTION_NOTES",
+    "AI_CONFIDENCE",
+    "AI_REASONS",
+    "AI_VISION_TAG",
+    "CITIZEN_URGENCY",
+    "SLA_HOURS",
 ]
 
 NOTIFICATION_COLUMNS = [
@@ -61,6 +73,20 @@ NOTIFICATION_COLUMNS = [
 
 REQUEST_STATUSES = ["Open", "In Progress", "Resolved", "Closed"]
 
+CIVIC_COLORS = {
+    "bg_primary": "#071311",
+    "panel_bg": "#0E1C1A",
+    "panel_alt": "#132321",
+    "border": "rgba(255,255,255,0.09)",
+    "text_primary": "#ECF5F3",
+    "text_muted": "#9Aadaa",
+    "civic_emerald": "#0F766E",
+    "civic_teal": "#0D9488",
+    "success": "#10B981",
+    "warning": "#F59E0B",
+    "priority_high": "#EF4444",
+    "info": "#38BDF8",
+}
 MODEL_INFO = {
     "priority_metrics": {
         "Test accuracy": "99.68%",
