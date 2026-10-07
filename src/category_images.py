@@ -316,14 +316,45 @@ def _search_unsplash(category: str, query: str, access_key: str, size: str, time
 
 
 def _local_image(category: str, size: str) -> ImageResult:
+    from src.config import CIVIC_SAMPLES_DIR, ROAD_WATCH_ASSETS_DIR
     from src.media import generate_category_banner
 
-    image_bytes = generate_category_banner(_clean_label(category))
+    label = _clean_label(category)
+    lowered = label.casefold()
+    image_bytes = None
+    credit = "Illustration generated locally by CivicPulse"
+
+    # Map civic categories to local high-res sample assets
+    sample_file = None
+    if any(k in lowered for k in ("pothole", "road", "street repair", "pavement")):
+        sample_file = ROAD_WATCH_ASSETS_DIR / "dashcam_pothole_urban_day.jpg"
+        credit = "Road Watch dashcam sample visual · illustrative only"
+    elif any(k in lowered for k in ("streetlight", "street light", "lighting", "lamp post")):
+        sample_file = CIVIC_SAMPLES_DIR / "streetlight_flicker_inspect.jpg"
+        if not sample_file.is_file():
+            sample_file = CIVIC_SAMPLES_DIR / "streetlight_dusk_hero.jpg"
+        credit = "Streetlight inspection sample visual · illustrative only"
+    elif any(k in lowered for k in ("water", "leak", "hydrant", "flood", "pipe")):
+        sample_file = CIVIC_SAMPLES_DIR / "water_pipe_leak.jpg"
+        credit = "Water utility incident sample visual · illustrative only"
+    elif any(k in lowered for k in ("waste", "garbage", "trash", "rubbish", "sanitation", "litter")):
+        sample_file = CIVIC_SAMPLES_DIR / "waste_overflow_bin.jpg"
+        credit = "Municipal sanitation sample visual · illustrative only"
+
+    if sample_file and sample_file.is_file():
+        try:
+            image_bytes = sample_file.read_bytes()
+        except OSError:
+            image_bytes = None
+
+    if not image_bytes:
+        image_bytes = generate_category_banner(label)
+
     return ImageResult(
         url=None,
         image_bytes=image_bytes,
-        alt_text=f"Illustration for {_clean_label(category)}; not evidence for a specific report.",
-        credit="Illustration generated locally by CivicPulse",
+        alt_text=f"Illustration for {label}; not evidence for a specific report.",
+        credit=credit,
         source_page_url=None,
         provider_name="Local illustration",
     )
@@ -540,8 +571,12 @@ def category_image_markup(category: str, result: ImageResult, *, variant: str = 
     safe_label = html.escape(label)
     image_source = ""
     if result.image_bytes:
-        mime = "image/webp" if result.provider_name != "Local illustration" else "image/png"
-        # The local renderer emits PNG; remote providers are normalized to WebP.
+        if result.image_bytes.startswith(b"\xff\xd8"):
+            mime = "image/jpeg"
+        elif result.image_bytes.startswith(b"\x89PNG"):
+            mime = "image/png"
+        else:
+            mime = "image/webp" if result.provider_name != "Local illustration" else "image/png"
         image_source = f"data:{mime};base64,{base64.b64encode(result.image_bytes).decode('ascii')}"
     elif result.url and _is_safe_https_url(result.url):
         image_source = result.url

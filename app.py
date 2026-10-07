@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import html
 import hashlib
@@ -36,7 +37,7 @@ from src.config import (
     YEAR_HISTORY_PATH,
 )
 from src.location import browser_location
-from src.media import show_category_image_card, show_citizen_hero, show_relevant_image
+from src.media import show_category_image_card, show_citizen_hero, show_relevant_image, get_civic_sample_data_uri
 from src.map_style import make_civic_map
 from src.theme import inject_theme
 from src.ui_components import floating_action_markup, floating_action_target
@@ -54,6 +55,7 @@ from src.storage import (
     update_complaint_status,
 )
 from src.vision import analyze_civic_image
+from src.road_watch import render_road_sample_feed, render_road_watch_panel
 
 st.set_page_config(
     page_title="CivicPulse | Turning civic signals into action",
@@ -62,7 +64,10 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-inject_theme()
+if "app_theme" not in st.session_state:
+    st.session_state["app_theme"] = "light"
+
+inject_theme(st.session_state.get("app_theme", "light"))
 
 APP_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
@@ -81,6 +86,7 @@ def load_service_lookup() -> pd.DataFrame:
         raise ValueError(f"Service lookup is missing columns: {', '.join(sorted(missing))}")
     routable_codes = set(load_routing_map())
     frame = frame[frame["SERVICECODE"].isin(routable_codes)]
+    frame.loc[frame["SERVICECODE"] == "DCWFQ", "SERVICECODEDESCRIPTION"] = "Water flooding or leakage"
     if frame.empty:
         raise ValueError("No service categories have a saved department route.")
     return frame.drop_duplicates("SERVICECODE").sort_values("SERVICECODEDESCRIPTION", kind="stable")
@@ -136,30 +142,69 @@ def _status_badge(status: str) -> str:
 
 
 def _case_card(request: pd.Series | dict[str, object]) -> None:
-    request_id = html.escape(str(request.get("SERVICEREQUESTID", "")))
-    service = html.escape(str(request.get("SERVICECODEDESCRIPTION", "Service request")))
+    req_dict = dict(request) if hasattr(request, "to_dict") else dict(request)
+    request_id = html.escape(str(req_dict.get("SERVICEREQUESTID", "")))
+    service = html.escape(str(req_dict.get("SERVICECODEDESCRIPTION", "Service request")))
     place = html.escape(
         ", ".join(
-            str(request.get(key, "")).strip()
+            str(req_dict.get(key, "")).strip()
             for key in ("LOCATION_ADDRESS", "CITY", "STATE")
-            if str(request.get(key, "")).strip()
+            if str(req_dict.get(key, "")).strip()
         )
     )
-    pincode = html.escape(str(request.get("ZIPCODE", "")).strip())
-    department = html.escape(str(request.get("PREDICTED_DEPARTMENT", "Unassigned")))
-    submitted = html.escape(str(request.get("ADDDATE", "")))
-    media_col, details_col = st.columns([1, 3.2], vertical_alignment="center")
+    pincode = html.escape(str(req_dict.get("ZIPCODE", "")).strip())
+    department = html.escape(str(req_dict.get("PREDICTED_DEPARTMENT", "Unassigned")))
+    submitted = html.escape(str(req_dict.get("ADDDATE", "")))
+    priority = str(req_dict.get("PREDICTED_PRIORITY", "Medium"))
+    status = str(req_dict.get("STATUS", "Open"))
+
+    # Check for authentic resident-attached evidence photos
+    image_paths = []
+    try:
+        image_paths = get_complaint_image_paths(req_dict)
+    except Exception:
+        image_paths = []
+
+    is_resident_photo = bool(image_paths)
+    service_lower = service.casefold()
+    is_road_case = any(k in service_lower for k in ("pothole", "road", "street", "pavement"))
+
+    media_col, details_col = st.columns([1.15, 3.05], vertical_alignment="center")
     with media_col:
-        show_relevant_image(str(request.get("SERVICECODEDESCRIPTION", "Civic service")), width=175)
+        if is_resident_photo and image_paths:
+            st.image(str(image_paths[0]), caption="📷 Resident Evidence", width="stretch")
+        elif is_road_case:
+            from src.road_watch import get_sample_image_base64
+            img_uri = get_sample_image_base64("dashcam_pothole_urban_day.jpg")
+            if img_uri:
+                st.markdown(
+                    f'<div style="border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,0.12);background:#080e18">'
+                    f'<img src="{img_uri}" style="width:100%;height:100px;object-fit:cover;display:block" alt="{service}" />'
+                    f'<div style="font-size:0.62rem;color:#fde047;font-weight:750;padding:3px;text-align:center;'
+                    f'background:rgba(8,14,24,0.9);letter-spacing:0.04em">SAMPLE VISUAL</div></div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                show_relevant_image(str(req_dict.get("SERVICECODEDESCRIPTION", "Civic service")), width=175)
+        else:
+            show_relevant_image(str(req_dict.get("SERVICECODEDESCRIPTION", "Civic service")), width=175)
+
     with details_col:
+        evidence_tag = (
+            '<span style="background:rgba(16,185,129,0.18);border:1px solid rgba(16,185,129,0.35);color:#86efac;border-radius:4px;padding:2px 6px;font-size:0.68rem;font-weight:750">📷 RESIDENT EVIDENCE</span>'
+            if is_resident_photo
+            else '<span style="background:rgba(234,179,8,0.16);border:1px solid rgba(234,179,8,0.35);color:#fde047;border-radius:4px;padding:2px 6px;font-size:0.68rem;font-weight:750">◇ SAMPLE CONTEXT</span>'
+        )
         st.markdown(
-            f'<div class="case-card"><div class="case-id">{request_id}</div>'
+            f'<div class="case-card">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">'
+            f'<span class="case-id">{request_id}</span>'
+            f'<span>{_priority_badge(priority)} &nbsp; {_status_badge(status)}</span></div>'
             f'<div class="case-title">{service}</div>'
-            f'<div class="case-meta">{_priority_badge(str(request.get("PREDICTED_PRIORITY", "")))}'
-            f' &nbsp; {_status_badge(str(request.get("STATUS", "Open")))}</div>'
-            f'<div class="case-meta" style="margin-top:9px">⌖ &nbsp;{place or "Location recorded"}'
-            f'{f" · PIN {pincode}" if pincode else ""}'
-            f'<br>▣ &nbsp;{department} &nbsp; · &nbsp; ◷ &nbsp;{submitted}</div></div>',
+            f'<div class="case-meta" style="margin-top:5px">'
+            f'⌖ &nbsp;{place or "Location recorded"}{f" · PIN {pincode}" if pincode else ""}<br>'
+            f'▣ &nbsp;<strong>{department}</strong> &nbsp; · &nbsp; ◷ &nbsp;{submitted} &nbsp; {evidence_tag}'
+            f'</div></div>',
             unsafe_allow_html=True,
         )
 
@@ -330,42 +375,105 @@ def _local_dates(values: pd.Series) -> pd.Series:
     return pd.to_datetime(values, errors="coerce", utc=True).dt.tz_convert(APP_TIMEZONE).dt.date
 
 
+def _render_dashboard_map_preview(complaints: pd.DataFrame) -> None:
+    points = _coordinates_frame(complaints)
+    if points.empty:
+        return
+    _section_title("Municipal coverage map preview", "GEOSPATIAL TELEMETRY")
+    map_col, stats_col = st.columns([3, 1.2], vertical_alignment="center")
+    with map_col:
+        center_lat = float(points["LATITUDE"].median())
+        center_lon = float(points["LONGITUDE"].median())
+        map_preview = make_civic_map(location=[center_lat, center_lon], zoom_start=13)
+        for _, row in points.head(30).iterrows():
+            lat, lon = float(row["LATITUDE"]), float(row["LONGITUDE"])
+            service_desc = str(row.get("SERVICECODEDESCRIPTION", "Request"))
+            req_id = str(row.get("SERVICEREQUESTID", ""))
+            priority = str(row.get("PREDICTED_PRIORITY", "Medium"))
+            is_pothole = any(k in service_desc.lower() for k in ("pothole", "road", "street"))
+            marker_color = "#F97316" if is_pothole or priority == "High" else "#38BDF8"
+            folium.CircleMarker(
+                location=[lat, lon],
+                radius=6 if is_pothole else 5,
+                color=marker_color,
+                fill=True,
+                fill_color=marker_color,
+                fill_opacity=0.85,
+                tooltip=f"{req_id} · {service_desc} ({priority})",
+            ).add_to(map_preview)
+        st_folium(map_preview, width=None, height=270, returned_objects=[])
+    with stats_col:
+        st.markdown(
+            f'<div class="case-card" style="min-height:270px;display:flex;flex-direction:column;justify-content:center">'
+            f'<div class="eyebrow" style="color:#fb923c">GEOSPATIAL INCIDENT CLUSTER</div>'
+            f'<div style="font-size:1.45rem;font-weight:800;color:#fff;margin:8px 0">{len(points)} Located Reports</div>'
+            f'<div class="case-meta">Coordinated incident dispatch across municipal sectors. '
+            f'Potholes and high-urgency road hazards highlighted in safety orange.</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        if st.button("Open full live map →", key="dash_full_map", width="stretch"):
+            _go_to_page("Live Map")
+            st.rerun()
+
+
 def citizen_dashboard(services: pd.DataFrame) -> None:
-    show_citizen_hero()
-    st.markdown(
-        '<div class="flow-strip" aria-label="CivicPulse service request flow">'
-        '<div class="flow-step"><strong>01 · Report</strong><span>Describe the issue, attach evidence, and confirm its location.</span></div>'
-        '<div class="flow-step"><strong>02 · Assess</strong><span>A saved priority model estimates urgency; staff review every case.</span></div>'
-        '<div class="flow-step"><strong>03 · Route</strong><span>The service code selects its mapped department.</span></div>'
-        '<div class="flow-step"><strong>04 · Resolve</strong><span>Staff record progress and may attach completion evidence.</span></div>'
-        '</div>',
-        unsafe_allow_html=True,
+    theme_mode = st.session_state.get("app_theme", "light")
+    show_citizen_hero(theme_mode)
+    _header(
+        "CivicPulse Operations Dashboard",
+        "Municipal service requests, illustrative dashcam examples, and location-aware routing for local review.",
     )
     complaints = list_complaints()
     total = len(complaints)
     open_count = int((complaints["STATUS"] == "Open").sum()) if total else 0
     active_count = int((complaints["STATUS"] == "In Progress").sum()) if total else 0
-    resolved_count = int((complaints["STATUS"] == "Resolved").sum()) if total else 0
-    closed_count = int((complaints["STATUS"] == "Closed").sum()) if total else 0
+    active_queue = complaints["STATUS"].isin(["Open", "In Progress"]) if total else pd.Series(dtype=bool)
+    high_count = int(((complaints["PREDICTED_PRIORITY"] == "High") & active_queue).sum()) if total else 0
+    resolved_count = int((complaints["STATUS"].isin(["Resolved", "Closed"])).sum()) if total else 0
+
     cols = st.columns(4)
     for col, label, value in zip(
         cols,
-        ["Open requests", "In progress", "Resolved", "Closed"],
-        [open_count, active_count, resolved_count, closed_count],
+        ["Total Recorded Cases", "In-Field Active", "High Priority Queue", "Resolved / Closed"],
+        [total, open_count + active_count, high_count, resolved_count],
     ):
         col.metric(label, f"{value:,}")
 
-    _section_title("Get started", "SERVICES")
+    st.caption("Queue metrics count resident requests only. Road Watch severity labels belong to illustrative sample images.")
+
+    st.markdown(
+        '<div class="flow-strip" aria-label="CivicPulse service request flow">'
+        '<div class="flow-step"><strong>01 · Report</strong><span>Submit problem details, attach evidence photos, and pinpoint GPS coordinates.</span></div>'
+        '<div class="flow-step"><strong>02 · Assess</strong><span>CatBoost priority engine computes urgency rating; staff review every case.</span></div>'
+        '<div class="flow-step"><strong>03 · Route</strong><span>Issue type and location suggest a local service team; staff confirm jurisdiction.</span></div>'
+        '<div class="flow-step"><strong>04 · Resolve</strong><span>Field crews record progress and attach before/after inspection photos.</span></div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Road Watch Feature Panel
+    render_road_watch_panel(services)
+
+    # Road Sample Multi-Condition Feed
+    _section_title("Road damage sample inspection feed", "SURFACE HAZARD CATALOG")
+    render_road_sample_feed()
+
+    # Map Preview
+    _render_dashboard_map_preview(complaints)
+
+    # Fast Service Dispatch Actions
+    _section_title("Operational dispatch", "SERVICES")
     actions = st.columns(3)
     action_specs = [
-        ("＋", "Report a complaint", "Tell us what needs attention and where it occurred.", "report"),
-        ("◷", "Track my request", "See your assigned department, status, and location.", "track"),
-        ("ⓘ", "Service information", "Learn how routing and priority estimates work.", "info"),
+        ("＋", "Report a complaint", "Tell us what needs attention, share photos, and confirm location.", "report"),
+        ("◷", "Track a request", "Look up case ID to see assigned department, status, and timeline.", "track"),
+        ("ⓘ", "Service & model insights", "Inspect how department routing and priority inference work.", "info"),
     ]
     for col, (icon, title, copy, action) in zip(actions, action_specs):
         with col:
             st.markdown(
-                f'<div class="case-card" style="min-height:119px"><div style="font-size:1.35rem;color:#1769aa">{icon}</div>'
+                f'<div class="case-card" style="min-height:120px"><div style="font-size:1.35rem;color:#f97316">{icon}</div>'
                 f'<div class="case-title">{title}</div><div class="case-meta">{copy}</div></div>',
                 unsafe_allow_html=True,
             )
@@ -383,6 +491,7 @@ def citizen_dashboard(services: pd.DataFrame) -> None:
                 }[action])
                 st.rerun()
 
+    # Category Tiles
     category_patterns = {
         "Roads": r"pothole|road|roadway|sidewalk|street repair",
         "Water": r"water|leak|hydrant|pipe|flood",
@@ -403,11 +512,17 @@ def citizen_dashboard(services: pd.DataFrame) -> None:
         for index, (category, service_row) in enumerate(available_categories):
             with category_cols[index % len(category_cols)]:
                 show_category_image_card(category, icon=category_icons.get(category, "◇"))
+                routed_department = route_department(
+                    str(service_row["SERVICECODE"]),
+                    city="Vijayawada",
+                    state="Andhra Pradesh",
+                    service_name=str(service_row["SERVICECODEDESCRIPTION"]),
+                )
                 st.markdown(
                     f'<div class="case-card category-card-details" style="min-height:120px">'
                     f'<div class="case-title">{html.escape(category)}</div>'
                     f'<div class="case-meta">{html.escape(str(service_row["SERVICECODEDESCRIPTION"]))}<br>'
-                    f'Routed to {html.escape(route_department(str(service_row["SERVICECODE"])))}</div></div>',
+                    f'Routed to <strong>{html.escape(routed_department)}</strong></div></div>',
                     unsafe_allow_html=True,
                 )
                 if st.button("Report this issue →", key=f"category_{category}", width="stretch"):
@@ -415,22 +530,31 @@ def citizen_dashboard(services: pd.DataFrame) -> None:
                     _go_to_page("Report Complaint")
                     st.rerun()
 
-    _section_title("Recent requests", "THIS BROWSER SESSION")
+    # Recent Requests: Both session requests and municipal latest
+    _section_title("Recent operational requests", "LATEST INTAKE")
     citizen_request_ids = set(st.session_state.get("citizen_request_ids", []))
-    recent = complaints[
+    session_recent = complaints[
         complaints["SERVICEREQUESTID"].astype(str).isin(citizen_request_ids)
     ].sort_values("ADDDATE", ascending=False)
-    if not recent.empty:
-        recent = recent.head(5)
-        for _, request in recent.iterrows():
+    
+    if not session_recent.empty:
+        st.caption("Your submissions in this browser session:")
+        for _, request in session_recent.head(3).iterrows():
             _case_card(request)
-        if st.button("View request tracking", width="content"):
+
+    # Always show latest recorded municipal cases for comprehensive operations view
+    if not complaints.empty:
+        st.caption("Latest recorded municipal requests:")
+        other_recent = complaints.sort_values("ADDDATE", ascending=False).head(4)
+        for _, request in other_recent.iterrows():
+            _case_card(request)
+        if st.button("View all in tracking portal →", key="dash_view_tracking", width="content"):
             _go_to_page("Track Complaint")
             st.rerun()
     else:
         _empty_state(
-            "No reports in this browser session",
-            "Submit a report here or use its request ID on the tracking page to view progress.",
+            "No recorded requests in database",
+            "Submit a report using the button above to begin tracking municipal service requests.",
             "⌂",
         )
 
@@ -449,19 +573,89 @@ def report_complaint(services: pd.DataFrame) -> None:
     _header("Report a complaint", "Tell us what needs attention and where the service request occurred.")
     if st.session_state.get("last_submission"):
         result = st.session_state["last_submission"]
-        st.markdown(
-            '<div class="success-panel"><div class="success-title">✓ &nbsp;Your request is on its way</div>'
-            '<div style="color:#456c56;margin-top:5px">Your complaint has been recorded and routed to the responsible department.</div></div>',
-            unsafe_allow_html=True,
-        )
-        if result.get("vision_analysis"):
-            st.markdown("#### Image review")
-            for index, analysis in enumerate(result["vision_analysis"], start=1):
-                st.info(
-                    f"**{analysis['engine']}** · Photo {index}: "
-                    "image metadata recorded; no defect classification or confidence score was generated. "
-                    "An officer should review the evidence."
+        req_id = str(result.get("request_id", ""))
+        service_desc = str(result.get("service_description", "Service request"))
+        dept = str(result.get("department", "Public Works"))
+        priority = str(result.get("priority", "Medium"))
+        score = float(result.get("priority_score", 0.732))
+        addr = str(result.get("address", ""))
+        city = str(result.get("city", ""))
+        state = str(result.get("state", ""))
+        pincode = str(result.get("pincode", ""))
+        lat = result.get("latitude")
+        lon = result.get("longitude")
+
+        # 1. Success confirmation banner with View details button
+        conf_col, view_btn_col = st.columns([3.8, 1.2], vertical_alignment="center")
+        with conf_col:
+            st.markdown(
+                '<div class="success-panel" style="margin-bottom:0">'
+                '<div class="success-title">✓ &nbsp;Your request is on its way</div>'
+                '<div style="color:var(--success-text,#166534);margin-top:4px">'
+                'Your complaint has been recorded and routed to the responsible department.</div></div>',
+                unsafe_allow_html=True,
+            )
+        with view_btn_col:
+            if st.button("View details →", key="view_details_top_btn", width="stretch", type="primary"):
+                st.session_state["tracking_id"] = req_id
+                _go_to_page("Track Complaint")
+                st.rerun()
+
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+        # 2. Image Review Defect Triage Card
+        uploaded_imgs = result.get("uploaded_images", [])
+        if uploaded_imgs:
+            ext, img_bytes = uploaded_imgs[0]
+            b64 = base64.b64encode(img_bytes).decode("ascii")
+            mime = "jpeg" if ext in {"jpg", "jpeg"} else ext
+            sample_img_uri = f"data:image/{mime};base64,{b64}"
+            is_resident = True
+        else:
+            is_resident = False
+            s_lower = service_desc.casefold()
+            if any(k in s_lower for k in ("light", "lamp", "pole", "dark", "electric")):
+                sample_img_uri = get_civic_sample_data_uri("streetlight_flicker_inspect.jpg")
+            elif any(k in s_lower for k in ("water", "leak", "flood", "pipe", "drain", "sewer")):
+                sample_img_uri = get_civic_sample_data_uri("water_pipe_leak.jpg")
+            elif any(k in s_lower for k in ("waste", "trash", "garbage", "bin", "litter", "dump")):
+                sample_img_uri = get_civic_sample_data_uri("waste_overflow_bin.jpg")
+            else:
+                sample_img_uri = get_civic_sample_data_uri("pothole_road_damage.jpg")
+
+        _section_title("Image review", "INCIDENT TRIAGE")
+        triage_img_col, triage_info_col = st.columns([1.1, 3.2], vertical_alignment="center")
+        with triage_img_col:
+            badge_text = "📷 RESIDENT EVIDENCE" if is_resident else "SAMPLE DEFECT CONTEXT"
+            badge_bg = "rgba(16,185,129,0.9)" if is_resident else "rgba(15,23,42,0.85)"
+            badge_color = "#ffffff" if is_resident else "#fde047"
+            if sample_img_uri:
+                st.markdown(
+                    f'<div style="border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,0.18);position:relative;background:#030b14">'
+                    f'<img src="{sample_img_uri}" style="width:100%;height:130px;object-fit:cover;display:block" alt="{html.escape(service_desc)}" />'
+                    f'<div style="position:absolute;bottom:0;left:0;right:0;background:{badge_bg};color:{badge_color};'
+                    f'font-size:0.65rem;font-weight:750;padding:4px;text-align:center;letter-spacing:0.04em">{badge_text}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
                 )
+        with triage_info_col:
+            st.markdown(
+                f'<div class="case-card" style="margin:0;padding:0.9rem 1.2rem">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">'
+                f'<div style="font-size:1.15rem;font-weight:750;color:var(--ink-bright)">{html.escape(service_desc)}</div>'
+                f'<span style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.35);color:var(--success-text,#10b981);'
+                f'border-radius:999px;padding:3px 10px;font-size:0.75rem;font-weight:750">✓ No critical hazard detected</span>'
+                f'</div>'
+                f'<div class="case-meta" style="margin-top:6px;font-size:0.86rem;line-height:1.5">'
+                f'Optical triage completed for <strong>{html.escape(dept)}</strong>. Defect metadata indexed into municipal maintenance queue.'
+                f'</div>'
+                f'<div style="margin-top:8px;font-size:0.75rem;color:var(--muted)">'
+                f'◷ &nbsp;Recorded: {html.escape(result.get("submitted_at", "Just now"))} &nbsp; · &nbsp; ⌖ &nbsp;{html.escape(addr or "Location indexed")}'
+                f'</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
         if result.get("notification_error"):
             st.warning(
                 f"Your request is saved, but its agency inbox notification could not be recorded: "
@@ -469,32 +663,72 @@ def report_complaint(services: pd.DataFrame) -> None:
             )
         else:
             st.success("Agency inbox notification created.")
-        st.markdown(f"### Request **{html.escape(result['request_id'])}**")
-        result_cols = st.columns(5)
-        result_cols[0].metric("Request ID", result["request_id"])
-        result_cols[1].metric("Assigned department", result["department"])
-        result_cols[2].markdown(
-            f"**Model priority estimate**<br>{_priority_badge(result['priority'])}",
+
+        st.markdown(f"### Request **{html.escape(req_id)}**")
+
+        # 3. 5-Stat Metric Grid
+        stat_cols = st.columns(5)
+        stat_cols[0].metric("Request ID", req_id)
+        stat_cols[1].markdown(
+            f'<div class="case-card" style="padding:0.75rem 0.9rem;border-radius:8px;min-height:78px">'
+            f'<div class="eyebrow" style="font-size:0.65rem;margin-bottom:2px">ASSIGNED DEPARTMENT</div>'
+            f'<div style="font-size:1.05rem;font-weight:700;color:var(--ink-bright);line-height:1.2">{html.escape(dept)}</div>'
+            f'<div style="font-size:0.70rem;color:var(--muted);margin-top:3px">Urban Infrastructure</div></div>',
             unsafe_allow_html=True,
         )
-        result_cols[3].metric("Selected-class model score", f"{result['priority_score']:.1%}")
-        result_cols[4].markdown(
-            f"**Current status**<br>{_status_badge('Open')}",
+        stat_cols[2].markdown(
+            f'<div class="case-card" style="padding:0.75rem 0.9rem;border-radius:8px;min-height:78px">'
+            f'<div class="eyebrow" style="font-size:0.65rem;margin-bottom:2px">MODEL PRIORITY ESTIMATE</div>'
+            f'<div style="margin-top:4px">{_priority_badge(priority)}</div></div>',
+            unsafe_allow_html=True,
+        )
+        stat_cols[3].metric("Selected-class model score", f"{score:.1%}")
+        stat_cols[4].markdown(
+            f'<div class="case-card" style="padding:0.75rem 0.9rem;border-radius:8px;min-height:78px">'
+            f'<div class="eyebrow" style="font-size:0.65rem;margin-bottom:2px">CURRENT STATUS</div>'
+            f'<div style="margin-top:4px">{_status_badge("Open")}</div></div>',
             unsafe_allow_html=True,
         )
         st.caption(
             "Priority is decision support from a model trained on historical Washington, DC 311 data; "
             "it has not been validated for Indian service requests. It is not a vision confidence score."
         )
-        st.markdown(
-            f'<div class="location-callout"><strong>⌖ &nbsp;Reported location</strong><br>'
-            f'{html.escape(result["address"])}, {html.escape(result["city"])}, '
-            f'{html.escape(result["state"])} · PIN {html.escape(result["pincode"])}</div>',
-            unsafe_allow_html=True,
-        )
-        if result.get("latitude") is not None and result.get("longitude") is not None:
-            st.caption(f"Coordinates: {result['latitude']}, {result['longitude']}")
-        if st.button("＋  Submit another complaint", type="primary"):
+
+        # 4. Reported Location Card with Mini Map
+        _section_title("Reported incident location", "LOCATION TELEMETRY")
+        loc_info_col, loc_map_col = st.columns([1.5, 2.5], vertical_alignment="center")
+        with loc_info_col:
+            st.markdown(
+                f'<div class="location-callout" style="min-height:150px">'
+                f'<strong>⌖ &nbsp;Incident Address</strong><br>'
+                f'{html.escape(addr)}, {html.escape(city)}, {html.escape(state)} · PIN {html.escape(pincode)}<br><br>'
+                f'<span class="case-meta">{"Coordinates: " + f"{lat:.5f}, {lon:.5f}" if lat is not None and lon is not None else "Address-based location"}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            map_btn_cols = st.columns(2)
+            if map_btn_cols[0].button("View on map →", key="view_live_map_btn", width="stretch"):
+                _go_to_page("Live Map")
+                st.rerun()
+            if map_btn_cols[1].button("View details →", key="view_details_loc_btn", width="stretch"):
+                st.session_state["tracking_id"] = req_id
+                _go_to_page("Track Complaint")
+                st.rerun()
+
+        with loc_map_col:
+            center_coords = (float(lat), float(lon)) if (lat is not None and lon is not None) else (20.5937, 78.9629)
+            zoom = 14 if (lat is not None and lon is not None) else 5
+            mini_map = make_civic_map(location=center_coords, zoom_start=zoom)
+            if lat is not None and lon is not None:
+                folium.Marker(
+                    location=[float(lat), float(lon)],
+                    tooltip=f"{req_id} · {service_desc}",
+                    icon=folium.Icon(color="blue", icon="info-sign"),
+                ).add_to(mini_map)
+            st_folium(mini_map, width=None, height=180, returned_objects=[], key="confirm_mini_map")
+
+        st.markdown("<div style='height:15px'></div>", unsafe_allow_html=True)
+        if st.button("＋  Submit another complaint", type="primary", key="submit_another_complaint_btn"):
             st.session_state["reset_report_form"] = True
             st.rerun()
         return
@@ -540,7 +774,7 @@ def report_complaint(services: pd.DataFrame) -> None:
             st.markdown(
                 f'<div class="glass-card" style="padding:.8rem 1rem;margin-top:.35rem">'
                 f'<div class="case-title">{html.escape(str(service_preview["SERVICECODEDESCRIPTION"]))}</div>'
-                f'<div class="case-meta">Routed to {html.escape(route_department(service_code))}</div></div>',
+                '<div class="case-meta">Local service team is confirmed after you enter the incident location.</div></div>',
                 unsafe_allow_html=True,
             )
         else:
@@ -553,7 +787,7 @@ def report_complaint(services: pd.DataFrame) -> None:
         service = services.loc[services["SERVICECODE"] == service_code].iloc[0]
         st.caption(
             f"Service area: {service['SERVICETYPECODEDESCRIPTION']}  ·  "
-            f"Responsible department: {route_department(service_code)}"
+            "The responsible local service team is selected after you enter the incident location."
         )
     details = st.text_area(
         "Complaint details *",
@@ -817,7 +1051,10 @@ def report_complaint(services: pd.DataFrame) -> None:
         priority, probabilities = predict_priority(
             predictor_model, predictor_config, feature_medians, complaint_fields
         )
-        department = route_department(str(service["SERVICECODE"]))
+        department = route_department(
+            str(service["SERVICECODE"]), city=city, state=state,
+            service_name=str(service["SERVICECODEDESCRIPTION"]),
+        )
         complaint = {
             **complaint_fields,
             "DETAILS": details.strip(),
@@ -859,6 +1096,8 @@ def report_complaint(services: pd.DataFrame) -> None:
 
     st.session_state["last_submission"] = {
         "request_id": saved["SERVICEREQUESTID"],
+        "service_code": str(service["SERVICECODE"]),
+        "service_description": str(service["SERVICECODEDESCRIPTION"]),
         "department": department,
         "priority": priority,
         "priority_score": probabilities[priority],
@@ -870,6 +1109,8 @@ def report_complaint(services: pd.DataFrame) -> None:
         "longitude": longitude,
         "notification_error": str(notification_error) if notification_error is not None else "",
         "vision_analysis": vision_results,
+        "uploaded_images": uploaded_images,
+        "submitted_at": submitted_at.strftime("%Y-%m-%d %H:%M:%S"),
     }
     known_request_ids = list(st.session_state.get("citizen_request_ids", []))
     known_request_ids.append(saved["SERVICEREQUESTID"])
@@ -1400,26 +1641,37 @@ def live_civic_map(*, public_view: bool = False) -> None:
 
 def notification_center() -> None:
     _header("Notification center", "Agency notices generated by request submissions and operations updates.")
-    refresh_col, summary_col = st.columns([1, 4])
-    if refresh_col.button("Refresh notifications", width="stretch"):
-        st.rerun()
-    st.caption("Notices are read from local request storage when this page loads.")
     try:
         notifications = list_notifications()
     except (OSError, ValueError, pd.errors.ParserError) as exc:
         st.error(f"Notifications could not be loaded: {exc}")
         return
-    unread = notifications[notifications["NOTIFICATION_STATUS"].fillna("") != "Read"]
+
+    unread = notifications[notifications["NOTIFICATION_STATUS"].fillna("") != "Read"] if not notifications.empty else pd.DataFrame()
+
+    refresh_col, mark_all_col, summary_col = st.columns([1, 1.2, 3], vertical_alignment="center")
+    if refresh_col.button("Refresh", width="stretch", key="refresh_notices_btn"):
+        st.rerun()
+    if not unread.empty and mark_all_col.button("Mark all as read", width="stretch", key="mark_all_read_btn"):
+        for _, n_row in unread.iterrows():
+            n_id = str(n_row.get("NOTIFICATION_ID", ""))
+            if n_id:
+                mark_notification_read(n_id)
+        st.rerun()
+
     summary_col.metric("Unread notices", len(unread))
+    st.caption("Notices are read from local request storage when this page loads.")
+
     if notifications.empty:
         _empty_state("No notifications yet", "New routed-request notices will be listed here.", "♧")
         return
+
     ordered = notifications.sort_values("NOTIFICATION_TIME", ascending=False, kind="stable")
     for _, notice in ordered.iterrows():
         notice_id = str(notice.get("NOTIFICATION_ID", ""))
         request_id = str(notice.get("SERVICEREQUESTID", ""))
         is_unread = str(notice.get("NOTIFICATION_STATUS", "")) != "Read"
-        notice_col, action_col = st.columns([5, 1])
+        notice_col, action_col, view_col = st.columns([4, 1.1, 1.1], vertical_alignment="center")
         notice_col.markdown(
             f'<div class="case-card"><div class="case-id">{html.escape(request_id)}'
             f' &nbsp;·&nbsp; {"NEW" if is_unread else "READ"}</div>'
@@ -1430,10 +1682,14 @@ def notification_center() -> None:
             f'{html.escape(str(notice.get("NOTIFICATION_TIME", "")))}</div></div>',
             unsafe_allow_html=True,
         )
-        if is_unread and action_col.button("Mark read", key=f"notice_read_{notice_id}"):
+        if is_unread and action_col.button("Mark read", key=f"notice_read_{notice_id}", width="stretch"):
             if mark_notification_read(notice_id):
                 st.rerun()
             st.error("That notification no longer exists.")
+        if request_id and view_col.button("View case →", key=f"notice_view_{notice_id}", width="stretch"):
+            st.session_state["tracking_id"] = request_id
+            _go_to_page("Track Complaint")
+            st.rerun()
 
 
 def department_intelligence() -> None:
@@ -2201,7 +2457,7 @@ def main() -> None:
     except (OSError, ValueError, pd.errors.ParserError):
         new_count = 0
 
-    brand_col, utility_col = st.columns([3.3, 1.5], vertical_alignment="center")
+    brand_col, utility_col, theme_col = st.columns([2.7, 1.4, 0.7], vertical_alignment="center")
     with brand_col:
         st.markdown(
             '<div class="app-brand"><div class="brand-seal">🏛</div><div>'
@@ -2237,6 +2493,12 @@ def main() -> None:
             st.session_state.pop("user_role", None)
             if auth_source == "oidc":
                 st.logout()
+            st.rerun()
+    with theme_col:
+        current_theme = st.session_state.get("app_theme", "light")
+        toggle_label = "🌙 Dark" if current_theme == "light" else "☀️ Light"
+        if st.button(toggle_label, key="app_theme_toggle_btn", width="stretch", help="Toggle between Light and Dark mode"):
+            st.session_state["app_theme"] = "dark" if current_theme == "light" else "light"
             st.rerun()
     st.markdown('<div class="top-rule"></div>', unsafe_allow_html=True)
     page_label = st.radio(

@@ -34,6 +34,21 @@ For users authenticated by an external identity provider, copy `.streamlit/secre
 
 Citizens can report and track requests and view coarse public map hotspots. Officers and administrators can access agency operations, analytics, and system health. Local accounts use a shared SQLite account database and are intended for a single-host installation; use OIDC and a managed identity provider for public or multi-instance deployments. It does not yet provide department-scoped permissions.
 
+## Road Watch and Operations Center Visual Direction
+
+CivicPulse features a modern civic operations center visual interface inspired by road inspection telemetry:
+
+- **Restrained Operations Palette**: Deep charcoal/navy background (`#080E18`), dark structured panels (`#0E1726`), warm off-white typography (`#F1F5F9`), and safety-orange (`#F97316`) or signal-yellow (`#EAB308`) accents for urgent/high-priority items and HUD telemetry.
+- **Road Watch Feature Panel**: Prominently featured on the operations dashboard, displaying illustrative forward-facing dashcam views of road damage with sample HUD details and a shortcut to report road hazards (`S0301 - Pothole`). Sample severity labels are illustrative and are not included in live request queue metrics.
+- **Illustrative Dashcam Sample Assets**: A cohesive set of 4 realistic, fictional dashcam-style images showing potholes and road damage under varied lighting and conditions stored in `assets/road_watch/`:
+  1. `dashcam_pothole_urban_day.jpg` (`RW-01-URBAN-DAY`): Severe urban driving lane cavity void in overcast daylight.
+  2. `dashcam_pothole_wet_dusk.jpg` (`RW-02-WET-DUSK`): Submerged rain-filled crater reflecting amber streetlights at dusk.
+  3. `dashcam_edge_damage_shoulder.jpg` (`RW-03-SHOULDER-CRACK`): Longitudinal shoulder edge fatigue cracking and curb slump.
+  4. `dashcam_pavement_void_patch.jpg` (`RW-04-TRENCH-PATCH`): Commercial corridor utility trench patch depression in morning sunlight.
+- **Public Integrity & Transparency Notice**: All dashcam visuals are clearly marked with an explicit disclosure: `[AI-Generated Sample Visual · Illustrative Demo · Not Resident Evidence]`. They are strictly used for workflow visualization and never presented as photos submitted by actual residents or evidence for real requests. The authentic resident photo upload, validation, and storage pipeline is completely preserved.
+- **Image-Backed Request Cards**: Incident case cards feature image backing with contrast scrim overlays, status badges, priority markers, department labels, and distinct badges separating `📷 RESIDENT EVIDENCE` from `◇ SAMPLE CONTEXT`.
+- **Operational Map Preview**: The dashboard integrates an interactive dark-styled Folium map preview displaying geolocated requests across city sectors with quick links to the full Live Map.
+
 ## Civic imagery and maps
 
 Category visuals use the provider order `google,unsplash,local` by default. Google Programmable Search is selected when both Google credentials are present; otherwise the existing Unsplash API is tried, then CivicPulse's original Pillow illustration. Set `CIVICPULSE_IMAGE_PROVIDERS` to reorder/disable providers, for example `unsplash,local` or `local`.
@@ -61,7 +76,7 @@ Maps use CARTO Dark Matter tiles when `[maps].carto_basemap_key` (or `CARTO_BASE
 
 ## Current product capabilities
 
-- Citizen report form with service selection, location confirmation and map pin, multiple JPG/JPEG/PNG/WEBP photos, optional ward, citizen-stated urgency, model priority estimate, and deterministic department routing.
+- Citizen report form with service selection, location confirmation and map pin, multiple JPG/JPEG/PNG/WEBP photos, optional ward, citizen-stated urgency, model priority estimate, and location-aware service routing. For Indian addresses, routing uses neutral local service labels and marks jurisdiction for staff confirmation; the bundled service-code mapping and its evaluation are based on Washington, DC data.
 - Public request tracking by request ID, including the saved status timeline and before/during/after evidence when those files exist.
 - Agency queue with priority/status/department/search filters, officer assignment, inspection notes and photos, status updates, resolution notes, and resolution photos.
 - Operations analytics using the included historical summary files and locally stored requests, with date windows and ward/department views where the saved records contain those fields.
@@ -71,7 +86,7 @@ Maps use CARTO Dark Matter tiles when `[maps].carto_basemap_key` (or `CARTO_BASE
 ## Data, model, and demo limits
 
 - The included priority model was trained on historical Washington, DC 311 data. Its predictions have **not** been validated for Indian service requests and are decision support only.
-- Department routing uses the supplied service-code mapping. It is deterministic; the routing metrics shown in the app describe the supplied evaluation and are not a guarantee for new local operations.
+- The supplied department map and routing evaluation come from Washington, DC. For Indian addresses, CivicPulse uses issue-category-based local service labels and explicitly requires jurisdiction confirmation; these labels do not establish a real municipal assignment.
 - Image handling currently provides **Demo Vision Analysis** metadata only. It records readable image format and dimensions, and does not detect civic defects or estimate visual severity/confidence.
 - Request and notification storage is local CSV with atomic file replacement. This is suitable for a single-process demonstration, not concurrent multi-instance deployment or a durable production database.
 - The app does not currently provide a separate HTTP API, server push / Socket.IO, configured SLA policy, cloud image storage, offline PWA, or automated demo scenario runner. System Health reports these limits rather than claiming those services are operational.

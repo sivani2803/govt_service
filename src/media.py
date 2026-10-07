@@ -1,8 +1,9 @@
-"""Contextual civic imagery with an explicitly illustrative local fallback.
+"""Contextual civic imagery and theme-aware heroes with local sample assets.
 
-Category images use the provider service in ``src.category_images``; Unsplash
-metadata and Pillow's original illustration remain the existing providers.
-Illustrations are never presented as report evidence.
+Provides theme-responsive hero banners and category visuals for CivicPulse:
+- Light Theme: Warm streetlight hero at dusk with clean spacing (Reference Screenshot 1)
+- Dark Theme: Cinematic nighttime streetlight scene with glowing accents (Reference Screenshot 2)
+- Civic Issue Visuals: Streetlights, Water leaks, Waste overflow, and Road potholes
 """
 from __future__ import annotations
 
@@ -12,12 +13,15 @@ import os
 import re
 from functools import lru_cache
 from io import BytesIO
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
+
+from src.config import CIVIC_SAMPLES_DIR, ROAD_WATCH_ASSETS_DIR
 
 
 def _unsplash_key() -> str:
@@ -82,6 +86,24 @@ def get_relevant_image(query: str, *, timeout: float = 4.0, access_key: str | No
     return _search_unsplash(cleaned_query, key, max(3.0, min(5.0, float(timeout))))
 
 
+@lru_cache(maxsize=16)
+def get_civic_sample_data_uri(filename: str) -> str:
+    """Return a base64 data URI for an asset in assets/civic_samples."""
+    file_path = CIVIC_SAMPLES_DIR / filename
+    if not file_path.is_file():
+        # check road_watch directory
+        file_path = ROAD_WATCH_ASSETS_DIR / filename
+    if not file_path.is_file():
+        return ""
+    try:
+        data = file_path.read_bytes()
+        encoded = base64.b64encode(data).decode("ascii")
+        ext = "jpeg" if filename.lower().endswith((".jpg", ".jpeg")) else "png"
+        return f"data:image/{ext};base64,{encoded}"
+    except OSError:
+        return ""
+
+
 @lru_cache(maxsize=32)
 def generate_category_banner(query: str) -> bytes:
     """Draw a local, non-photographic civic category illustration with Pillow."""
@@ -99,7 +121,6 @@ def generate_category_banner(query: str) -> bytes:
     draw = ImageDraw.Draw(image, "RGBA")
     draw.ellipse((560, -175, 910, 180), fill=(13, 148, 136, 45), outline=(94, 234, 212, 115), width=2)
     draw.ellipse((604, -135, 850, 105), outline=(94, 234, 212, 70), width=2)
-    # Street, lane markings, and civic buildings create a reusable local illustration.
     draw.rectangle((0, 255, width, height), fill=(8, 22, 24, 255))
     draw.polygon([(0, 314), (250, 261), (800, 261), (800, 360), (0, 360)], fill=(30, 48, 50, 255))
     for x in (370, 495, 620, 745):
@@ -163,49 +184,65 @@ def show_category_image_card(category: str, *, icon: str = "◇") -> None:
     )
 
 
-def show_citizen_hero() -> None:
-    """Render a contextual, accessible dashboard hero with a report CTA."""
-    from src.category_images import get_category_image
+def show_citizen_hero(theme_mode: str = "light") -> None:
+    """Render the theme-aware hero banner matching Reference Screenshots 1 and 2."""
+    is_dark = str(theme_mode).strip().lower() == "dark"
 
-    category = "Civic infrastructure"
-    placeholder = st.empty()
-    placeholder.markdown(
-        '<section class="citizen-hero" role="status" aria-label="Loading civic category image">'
-        '<div class="citizen-hero-image category-skeleton"><span class="skeleton-shimmer"></span></div>'
-        '<div class="citizen-hero-overlay"><div class="hero-kicker">CivicPulse · Turning civic signals into action</div>'
-        '<h1>Let’s make your neighborhood work better.</h1>'
-        '<p>Report a local issue, share its location, and follow the request through resolution.</p>'
-        '<span class="hero-cta" aria-hidden="true">＋ Report an issue →</span></div></section>',
-        unsafe_allow_html=True,
+    if is_dark:
+        # Dark theme hero (Screenshot 2)
+        hero_img_uri = get_civic_sample_data_uri("streetlight_night_dark.jpg")
+        headline = "A Smarter Tomorrow<br>Through <span style='color:#00F2FE'>Safer Cities</span>"
+        subtitle = "Report &nbsp;•&nbsp; Predict &nbsp;•&nbsp; Improve"
+        script_tag = "Even a flicker matters..."
+        tagline = "◈ MUNICIPAL OPERATIONS & PREDICTIVE TRIAGE"
+        pills_html = """
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:1.2rem">
+          <span class="utility-pill" style="border-color:rgba(56,189,248,0.3);background:rgba(11,30,54,0.7);color:#38bdf8">🧠 AI-Powered Analysis</span>
+          <span class="utility-pill" style="border-color:rgba(56,189,248,0.3);background:rgba(11,30,54,0.7);color:#38bdf8">⚡ Real-time Tracking</span>
+          <span class="utility-pill" style="border-color:rgba(56,189,248,0.3);background:rgba(11,30,54,0.7);color:#38bdf8">🛡️ Transparent &amp; Accountable</span>
+        </div>
+        """
+    else:
+        # Light theme hero (Screenshot 1)
+        hero_img_uri = get_civic_sample_data_uri("streetlight_dusk_hero.jpg")
+        headline = "Smarter Cities.<br><span style='color:#0D9488'>Safer Communities.</span>"
+        subtitle = "CivicPulse uses AI to predict and prioritize government service requests, helping authorities respond faster and build better cities."
+        script_tag = "Better Infrastructure,<br>Brighter Tomorrows"
+        tagline = "◈ Government Service Request Prediction"
+        pills_html = """
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:1.2rem">
+          <span class="utility-pill" style="background:#ffffff;border-color:#cbd5e1;color:#0369a1">🧠 AI-Powered Analysis</span>
+          <span class="utility-pill" style="background:#ffffff;border-color:#cbd5e1;color:#0369a1">⚡ Real-time Tracking</span>
+          <span class="utility-pill" style="background:#ffffff;border-color:#cbd5e1;color:#0369a1">🛡️ Transparent &amp; Accountable</span>
+        </div>
+        """
+
+    img_tag = (
+        f'<img class="civic-hero-img" src="{hero_img_uri}" alt="Civic streetlight hero" loading="eager">'
+        if hero_img_uri
+        else '<div class="civic-hero-img category-skeleton"><span class="skeleton-shimmer"></span></div>'
     )
-    result = get_category_image(category, size="hero")
-    image_source = ""
-    if result.image_bytes:
-        mime = "image/png" if result.provider_name == "Local illustration" else "image/webp"
-        image_source = f"data:{mime};base64,{base64.b64encode(result.image_bytes).decode('ascii')}"
-    elif result.url:
-        image_source = result.url
-    safe_alt = html.escape(result.alt_text, quote=True)
-    safe_credit = html.escape(result.credit or result.provider_name)
-    source_link = html.escape(result.source_page_url or "", quote=True)
-    attribution_text = (
-        f'<a href="{source_link}" target="_blank" rel="noopener noreferrer">{safe_credit}</a>'
-        if source_link
-        else safe_credit
-    )
-    attribution = f'<div class="media-attribution">{attribution_text} · contextual image, not report evidence</div>'
-    image_markup = (
-        f'<img class="citizen-hero-image" src="{image_source}" alt="{safe_alt}" loading="eager">'
-        if image_source
-        else f'<div class="citizen-hero-image category-skeleton" role="img" aria-label="{safe_alt}"></div>'
-    )
-    placeholder.markdown(
-        '<section class="citizen-hero">' + image_markup
-        + '<div class="citizen-hero-overlay"><div class="hero-kicker">CivicPulse · Turning civic signals into action</div>'
-        + '<h1>Let’s make your neighborhood work better.</h1>'
-        + '<p>Report a local issue, share its location, and follow the request through resolution.</p>'
-        + '<a class="hero-cta" href="?nav=report" aria-label="Report an issue" title="Report an issue">'
-        + '<span aria-hidden="true">＋</span> Report an issue <span aria-hidden="true">→</span></a></div></section>'
-        + attribution,
+
+    st.markdown(
+        f"""
+        <div class="civic-hero-wrap">
+          {img_tag}
+          <div class="civic-hero-scrim"></div>
+          <div class="civic-hero-script">{script_tag}</div>
+          <div class="civic-hero-content">
+            <div class="hero-kicker">{tagline}</div>
+            <h1 style="margin:0.4rem 0 0.5rem;font-size:clamp(1.9rem, 3.8vw, 2.85rem) !important;line-height:1.14">
+              {headline}
+            </h1>
+            <p style="max-width:620px;margin:0;font-size:1.02rem;line-height:1.6">
+              {subtitle}
+            </p>
+            {pills_html}
+          </div>
+        </div>
+        <div class="media-attribution" style="margin-top:-0.4rem;margin-bottom:0.8rem">
+          Illustrative streetlight visual · not evidence for an individual request
+        </div>
+        """,
         unsafe_allow_html=True,
     )

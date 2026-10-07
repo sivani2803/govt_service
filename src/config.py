@@ -7,6 +7,9 @@ MODEL_DIR = ROOT_DIR / "government_service_request_model"
 APP_DATA_DIR = ROOT_DIR / "government_service_request_app"
 UPLOADS_DIR = APP_DATA_DIR / "uploads"
 AUTH_DATABASE_PATH = APP_DATA_DIR / "civicpulse_accounts.sqlite3"
+ASSETS_DIR = ROOT_DIR / "assets"
+ROAD_WATCH_ASSETS_DIR = ASSETS_DIR / "road_watch"
+CIVIC_SAMPLES_DIR = ASSETS_DIR / "civic_samples"
 
 PRIORITY_MODEL_PATH = MODEL_DIR / "priority_catboost_model.cbm"
 PROJECT_CONFIG_PATH = MODEL_DIR / "project_config.pkl"
@@ -74,12 +77,15 @@ NOTIFICATION_COLUMNS = [
 REQUEST_STATUSES = ["Open", "In Progress", "Resolved", "Closed"]
 
 CIVIC_COLORS = {
-    "bg_primary": "#071311",
-    "panel_bg": "#0E1C1A",
-    "panel_alt": "#132321",
-    "border": "rgba(255,255,255,0.09)",
-    "text_primary": "#ECF5F3",
-    "text_muted": "#9Aadaa",
+    "bg_primary": "#080E18",
+    "panel_bg": "#0E1726",
+    "panel_alt": "#142033",
+    "border": "rgba(255,255,255,0.10)",
+    "text_primary": "#F1F5F9",
+    "text_muted": "#94A3B8",
+    "safety_orange": "#F97316",
+    "signal_yellow": "#EAB308",
+    "ops_blue": "#38BDF8",
     "civic_emerald": "#0F766E",
     "civic_teal": "#0D9488",
     "success": "#10B981",
@@ -87,6 +93,7 @@ CIVIC_COLORS = {
     "priority_high": "#EF4444",
     "info": "#38BDF8",
 }
+
 MODEL_INFO = {
     "priority_metrics": {
         "Test accuracy": "99.68%",
